@@ -1,4 +1,4 @@
-// 提供全局 apiFetch：每次现读 token，统一错误处理
+// Global apiFetch for login/register pages
 (function ensureApiFetch() {
   if (!window.apiFetch) {
     window.apiFetch = async function apiFetch(path, method = "GET", body) {
@@ -12,9 +12,7 @@
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      if (res.status === 401) {
-        localStorage.removeItem("token");
-      }
+      if (res.status === 401) localStorage.removeItem("token");
 
       const ct = res.headers.get("content-type") || "";
       const isJSON = ct.includes("application/json");
@@ -52,8 +50,7 @@ async function login() {
     const data = await window.apiFetch("/api/auth/login", "POST", { username, password });
     if (!data?.token) throw new Error("No token returned by server.");
     localStorage.setItem("token", data.token);
-    // 确保写入落盘再跳转，避免新页首个请求拿不到 token
-    await Promise.resolve();
+    await Promise.resolve();       // ensure storage flush
     location.replace("dashboard.html");
   } catch (err) {
     alert("Login failed: " + err.message);

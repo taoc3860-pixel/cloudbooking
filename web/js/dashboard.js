@@ -1,4 +1,4 @@
-// 统一的 apiFetch（本页专用；路径请传 /api/...）
+// Unified apiFetch
 async function apiFetch(path, method = "GET", body) {
   const token = localStorage.getItem("token");
   const headers = { "Content-Type": "application/json" };
@@ -27,7 +27,7 @@ async function apiFetch(path, method = "GET", body) {
   return isJSON ? res.json() : res.text();
 }
 
-/* ---------- 缓存元素（在 DOMContentLoaded 里赋值） ---------- */
+/* ---------- Elements (assigned on DOMContentLoaded) ---------- */
 let elUserName, elLogout, elRoomSel, elDate, elStart, elEnd, elNotes, elForm, elFormMsg, elSlots, elRoomsList;
 let elSearchId, elBtnSearch, elSearchRes;
 
@@ -81,8 +81,8 @@ function renderBookings(list = []) {
       ${Array.isArray(b.participants) ? `<div>Participants: ${b.participants.length}</div>` : ""}
       ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap: wrap;">
-        <button data-act="cancel">Delete (owner)</button>
-        <button data-act="copy-id">Copy ID</button>
+        <button type="button" data-act="cancel">Delete (owner)</button>
+        <button type="button" data-act="copy-id">Copy ID</button>
       </div>
     </div>
   `).join("");
@@ -125,7 +125,9 @@ function renderSearchedBooking(b) {
       ${Array.isArray(b.participants) ? `<div>Participants: ${b.participants.length}</div>` : ""}
       ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        ${joined ? `<button data-act="leave">Leave</button>` : `<button data-act="join">Join</button>`}
+        ${joined
+          ? `<button type="button" data-act="leave">Leave</button>`
+          : `<button type="button" data-act="join">Join</button>`}
       </div>
     </div>
   `;
@@ -154,7 +156,7 @@ function renderSearchedBooking(b) {
   });
 }
 
-/* ---------- API 调用 ---------- */
+/* ---------- API calls ---------- */
 async function loadMe() {
   try {
     const me = await apiFetch("/api/auth/me");
@@ -163,7 +165,6 @@ async function loadMe() {
     elUserName.textContent = name;
   } catch (err) {
     elUserName.textContent = "Unknown";
-    // 若 401，apiFetch 已重定向到登录
   }
 }
 async function loadRooms() {
@@ -198,10 +199,13 @@ async function searchById() {
   }
 }
 
-/* ---------- 表单/事件 ---------- */
+/* ---------- Form / Events ---------- */
 function bindForm() {
   elForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const submitBtn = elForm.querySelector('button[type="submit"], input[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+
     elFormMsg.textContent = "Submitting…";
     try {
       const payload = {
@@ -211,6 +215,7 @@ function bindForm() {
         end: elEnd.value,
         notes: elNotes.value.trim() || undefined,
       };
+      console.log("[Create] payload:", payload);
       if (!payload.roomId) throw new Error("Please select a room.");
       if (payload.end <= payload.start) throw new Error("End time must be later than start time.");
       await apiFetch("/api/bookings", "POST", payload);
@@ -220,6 +225,8 @@ function bindForm() {
       await loadMyBookings();
     } catch (err) {
       elFormMsg.textContent = "Failed: " + err.message;
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
     }
   });
 }
@@ -243,9 +250,9 @@ function setDefaultDateTime() {
   elEnd.value = `${pad2(endH)}:${m2}`;
 }
 
-/* ---------- 首屏（关键：先串行验 /auth/me，再并发加载） ---------- */
+/* ---------- Boot: verify first, then load ---------- */
 window.addEventListener("DOMContentLoaded", async () => {
-  // 元素
+  // elements
   elUserName  = document.getElementById("user-name");
   elLogout    = document.getElementById("logout-btn");
   elRoomSel   = document.getElementById("room");
@@ -269,10 +276,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   bindForm();
   elLogout.addEventListener("click", bindLogout);
 
-  // 无 token 直接回登录
   if (!localStorage.getItem("token")) return location.replace("./index.html");
 
-  // 先串行验证身份（可能触发 401 重定向），通过后再并发拉数据
-  await loadMe();
+  await loadMe(); // verify token first
   await Promise.allSettled([loadRooms(), loadMyBookings()]);
 });
