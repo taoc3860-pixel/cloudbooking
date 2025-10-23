@@ -1,3 +1,4 @@
+// 统一的 apiFetch（本页专用；路径请传 /api/...）
 async function apiFetch(path, method = "GET", body) {
   const token = localStorage.getItem("token");
   const headers = { "Content-Type": "application/json" };
@@ -12,7 +13,7 @@ async function apiFetch(path, method = "GET", body) {
   if (res.status === 401) {
     localStorage.removeItem("token");
     alert("Please login again.");
-    window.location.href = "./index.html";
+    location.replace("./index.html");
     throw new Error("401 Unauthorized");
   }
 
@@ -26,32 +27,9 @@ async function apiFetch(path, method = "GET", body) {
   return isJSON ? res.json() : res.text();
 }
 
-(function ensureAuth() {
-  if (!localStorage.getItem("token")) {
-    window.location.href = "./index.html";
-  }
-})();
-
-const elUserName  = document.getElementById("user-name");
-const elLogout    = document.getElementById("logout-btn");
-const elRoomSel   = document.getElementById("room");
-const elDate      = document.getElementById("date");
-const elStart     = document.getElementById("start");
-const elEnd       = document.getElementById("end");
-const elNotes     = document.getElementById("notes");
-const elForm      = document.getElementById("form-book");
-const elFormMsg   = document.getElementById("form-msg");
-const elSlots     = document.getElementById("slot-list");
-const elRoomsList = document.getElementById("rooms-list");
-
-const elSearchId  = document.getElementById("search-id");
-const elBtnSearch = document.getElementById("btn-search");
-const elSearchRes = document.getElementById("search-result");
-
-//Initial placeholders ----------------- *
-elUserName.textContent = "Loading…";
-elRoomsList.textContent = "Loading…";
-elSlots.textContent = "Loading…";
+/* ---------- 缓存元素（在 DOMContentLoaded 里赋值） ---------- */
+let elUserName, elLogout, elRoomSel, elDate, elStart, elEnd, elNotes, elForm, elFormMsg, elSlots, elRoomsList;
+let elSearchId, elBtnSearch, elSearchRes;
 
 const pad2 = (n) => String(n).padStart(2, "0");
 function escapeHtml(s) {
@@ -62,7 +40,13 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s).replaceAll("\"", "&quot;"); }
 
-//Renderers
+function setPlaceholders() {
+  elUserName.textContent = "Loading…";
+  elRoomsList.textContent = "Loading…";
+  elSlots.textContent = "Loading…";
+}
+
+/* ---------- Renderers ---------- */
 function renderRooms(rooms = []) {
   if (!Array.isArray(rooms) || rooms.length === 0) {
     elRoomsList.innerHTML = `<div class="slot-item">No rooms available.</div>`;
@@ -103,7 +87,6 @@ function renderBookings(list = []) {
     </div>
   `).join("");
 
-  // wire actions
   elSlots.querySelectorAll('button[data-act="cancel"]').forEach(btn => {
     btn.addEventListener("click", async (e) => {
       const wrap = e.currentTarget.closest(".slot-item");
@@ -127,7 +110,6 @@ function renderBookings(list = []) {
   });
 }
 
-//Search by ID
 function renderSearchedBooking(b) {
   if (!b) {
     elSearchRes.innerHTML = `<div class="muted">No result.</div>`;
@@ -143,10 +125,7 @@ function renderSearchedBooking(b) {
       ${Array.isArray(b.participants) ? `<div>Participants: ${b.participants.length}</div>` : ""}
       ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        ${joined
-          ? `<button data-act="leave">Leave</button>`
-          : `<button data-act="join">Join</button>`
-        }
+        ${joined ? `<button data-act="leave">Leave</button>` : `<button data-act="join">Join</button>`}
       </div>
     </div>
   `;
@@ -156,7 +135,6 @@ function renderSearchedBooking(b) {
     const id = wrap.dataset.id;
     try {
       await apiFetch(`/api/bookings/${encodeURIComponent(id)}/join`, "POST");
-      // refresh search + my bookings
       await searchById();
       await loadMyBookings();
     } catch (e) {
@@ -176,24 +154,7 @@ function renderSearchedBooking(b) {
   });
 }
 
-async function searchById() {
-  const id = (elSearchId.value || "").trim();
-  if (!id) {
-    renderSearchedBooking(null);
-    return;
-  }
-  try {
-    const data = await apiFetch(`/api/bookings/${encodeURIComponent(id)}`);
-    renderSearchedBooking(data.booking);
-  } catch (e) {
-    renderSearchedBooking(null);
-    elSearchRes.innerHTML = `<div class="slot-item">Not found: ${escapeHtml(e.message)}</div>`;
-  }
-}
-elBtnSearch.addEventListener("click", (e) => { e.preventDefault(); searchById(); });
-elSearchId.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchById(); }});
-
-// load data
+/* ---------- API 调用 ---------- */
 async function loadMe() {
   try {
     const me = await apiFetch("/api/auth/me");
@@ -202,6 +163,7 @@ async function loadMe() {
     elUserName.textContent = name;
   } catch (err) {
     elUserName.textContent = "Unknown";
+    // 若 401，apiFetch 已重定向到登录
   }
 }
 async function loadRooms() {
@@ -221,36 +183,52 @@ async function loadMyBookings() {
   }
 }
 
-//Form submit
-elForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  elFormMsg.textContent = "Submitting…";
-  try {
-    const payload = {
-      roomId: elRoomSel.value,
-      date: elDate.value,
-      start: elStart.value,
-      end: elEnd.value,
-      notes: elNotes.value.trim() || undefined,
-    };
-    if (!payload.roomId) throw new Error("Please select a room.");
-    if (payload.end <= payload.start) throw new Error("End time must be later than start time.");
-    await apiFetch("/api/bookings", "POST", payload);
-    elFormMsg.textContent = "Created successfully.";
-    elForm.reset();
-    setDefaultDateTime();
-    await loadMyBookings();
-  } catch (err) {
-    elFormMsg.textContent = "Failed: " + err.message;
+async function searchById() {
+  const id = (elSearchId.value || "").trim();
+  if (!id) {
+    renderSearchedBooking(null);
+    return;
   }
-});
+  try {
+    const data = await apiFetch(`/api/bookings/${encodeURIComponent(id)}`);
+    renderSearchedBooking(data.booking);
+  } catch (e) {
+    renderSearchedBooking(null);
+    elSearchRes.innerHTML = `<div class="slot-item">Not found: ${escapeHtml(e.message)}</div>`;
+  }
+}
 
-//Logout
-elLogout.addEventListener("click", () => {
+/* ---------- 表单/事件 ---------- */
+function bindForm() {
+  elForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    elFormMsg.textContent = "Submitting…";
+    try {
+      const payload = {
+        roomId: elRoomSel.value,
+        date: elDate.value,
+        start: elStart.value,
+        end: elEnd.value,
+        notes: elNotes.value.trim() || undefined,
+      };
+      if (!payload.roomId) throw new Error("Please select a room.");
+      if (payload.end <= payload.start) throw new Error("End time must be later than start time.");
+      await apiFetch("/api/bookings", "POST", payload);
+      elFormMsg.textContent = "Created successfully.";
+      elForm.reset();
+      setDefaultDateTime();
+      await loadMyBookings();
+    } catch (err) {
+      elFormMsg.textContent = "Failed: " + err.message;
+    }
+  });
+}
+
+function bindLogout() {
   localStorage.removeItem("token");
   localStorage.removeItem("uid");
-  window.location.href = "./index.html";
-});
+  location.replace("./index.html");
+}
 
 function setDefaultDateTime() {
   const now = new Date();
@@ -265,8 +243,36 @@ function setDefaultDateTime() {
   elEnd.value = `${pad2(endH)}:${m2}`;
 }
 
-(async function init() {
+/* ---------- 首屏（关键：先串行验 /auth/me，再并发加载） ---------- */
+window.addEventListener("DOMContentLoaded", async () => {
+  // 元素
+  elUserName  = document.getElementById("user-name");
+  elLogout    = document.getElementById("logout-btn");
+  elRoomSel   = document.getElementById("room");
+  elDate      = document.getElementById("date");
+  elStart     = document.getElementById("start");
+  elEnd       = document.getElementById("end");
+  elNotes     = document.getElementById("notes");
+  elForm      = document.getElementById("form-book");
+  elFormMsg   = document.getElementById("form-msg");
+  elSlots     = document.getElementById("slot-list");
+  elRoomsList = document.getElementById("rooms-list");
+  elSearchId  = document.getElementById("search-id");
+  elBtnSearch = document.getElementById("btn-search");
+  elSearchRes = document.getElementById("search-result");
+
+  setPlaceholders();
   setDefaultDateTime();
+
+  elBtnSearch.addEventListener("click", (e) => { e.preventDefault(); searchById(); });
+  elSearchId.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchById(); }});
+  bindForm();
+  elLogout.addEventListener("click", bindLogout);
+
+  // 无 token 直接回登录
+  if (!localStorage.getItem("token")) return location.replace("./index.html");
+
+  // 先串行验证身份（可能触发 401 重定向），通过后再并发拉数据
   await loadMe();
   await Promise.allSettled([loadRooms(), loadMyBookings()]);
-})();
+});

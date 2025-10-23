@@ -1,3 +1,4 @@
+// 提供全局 apiFetch：每次现读 token，统一错误处理
 (function ensureApiFetch() {
   if (!window.apiFetch) {
     window.apiFetch = async function apiFetch(path, method = "GET", body) {
@@ -12,27 +13,28 @@
       });
 
       if (res.status === 401) {
-        // Not logged in or token expired
         localStorage.removeItem("token");
       }
 
+      const ct = res.headers.get("content-type") || "";
+      const isJSON = ct.includes("application/json");
+
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        try {
-          const j = JSON.parse(text);
+        if (isJSON) {
+          const j = await res.json().catch(() => ({}));
           throw new Error(j.message || j.error || `HTTP ${res.status}`);
-        } catch {
-          throw new Error(text || `HTTP ${res.status}`);
+        } else {
+          const t = await res.text().catch(() => "");
+          throw new Error(t || `HTTP ${res.status}`);
         }
       }
 
-      const ct = res.headers.get("content-type") || "";
-      return ct.includes("application/json") ? res.json() : res.text();
+      return isJSON ? res.json() : res.text();
     };
   }
 })();
 
-//Switch Form
+// Switch Form
 function showRegister() {
   document.getElementById("form-login").style.display = "none";
   document.getElementById("form-register").style.display = "block";
@@ -49,9 +51,10 @@ async function login() {
     if (!username || !password) throw new Error("Username and password required.");
     const data = await window.apiFetch("/api/auth/login", "POST", { username, password });
     if (!data?.token) throw new Error("No token returned by server.");
-    localStorage.setItem("token", data.token);     // ✅ 关键
-    alert("Login success!");
-    window.location.href = "dashboard.html";
+    localStorage.setItem("token", data.token);
+    // 确保写入落盘再跳转，避免新页首个请求拿不到 token
+    await Promise.resolve();
+    location.replace("dashboard.html");
   } catch (err) {
     alert("Login failed: " + err.message);
   }
@@ -64,14 +67,11 @@ async function register() {
   try {
     if (!username || !password) throw new Error("Username and password required.");
     const data = await window.apiFetch("/api/auth/register", "POST", { username, email, password });
-
     if (data?.token) {
-      // returned a token: Direct login
       localStorage.setItem("token", data.token);
-      alert("Register success! You are logged in.");
-      window.location.href = "dashboard.html";
+      await Promise.resolve();
+      location.replace("dashboard.html");
     } else {
-      // No token: Go back to login
       alert("Register success! Please login now.");
       showLogin();
     }
@@ -81,16 +81,16 @@ async function register() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("btn-login").addEventListener("click", (e) => {
+  document.getElementById("btn-login")?.addEventListener("click", (e) => {
     e.preventDefault(); login();
   });
-  document.getElementById("btn-register").addEventListener("click", (e) => {
+  document.getElementById("btn-register")?.addEventListener("click", (e) => {
     e.preventDefault(); register();
   });
-  document.getElementById("link-register").addEventListener("click", e => {
+  document.getElementById("link-register")?.addEventListener("click", (e) => {
     e.preventDefault(); showRegister();
   });
-  document.getElementById("link-login").addEventListener("click", e => {
+  document.getElementById("link-login")?.addEventListener("click", (e) => {
     e.preventDefault(); showLogin();
   });
 });

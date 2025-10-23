@@ -1,8 +1,6 @@
-// api.js —— 所有请求都用它
-async function apiFetch(path, method = "GET", body) {
+export async function apiFetch(path, method = "GET", body) {
   const headers = { "Content-Type": "application/json" };
-  // ✅ 每次调用时，现从 localStorage 取 token，不要在模块顶层缓存
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("token");   // 每次现读
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const resp = await fetch(`/api${path}`, {
@@ -11,13 +9,8 @@ async function apiFetch(path, method = "GET", body) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  // 尝试解析 JSON（有些错误响应未必是 JSON）
   let data = null;
-  try { data = await resp.json(); } catch { data = null; }
-
-  if (!resp.ok) {
-    const msg = (data && data.message) || `HTTP ${resp.status}`;
-    throw new Error(msg);
-  }
+  try { data = await resp.json(); } catch {}
+  if (!resp.ok) throw new Error((data && data.message) || `HTTP ${resp.status}`);
   return data;
 }
