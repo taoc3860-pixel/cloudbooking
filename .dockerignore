@@ -1,0 +1,10 @@
+# .dockerignore
+node_modules
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+cloudbooking-stack.yml
+npm-debug.log
+*.log
+.env
