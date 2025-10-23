@@ -1,60 +1,15 @@
-# cloudbooking-stack.yml
-version: "3.8"
-
-services:
-  app:
-    image: cloudbooking:latest
-    ports:
-      - "5055:5055"
-    env_file:
-      - .env
-    volumes:
-      - cloudbooking_data:/app/data
-    depends_on:
-      - mongo
-    deploy:
-      replicas: 3
-      update_config:
-        parallelism: 1
-        order: start-first
-        failure_action: rollback
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-      placement:
-        max_replicas_per_node: 3
-    networks:
-      - cloudbooking_net
-
-  mongo:
-    image: mongo:6
-    command: ["--bind_ip_all"]
-    volumes:
-      - mongo_data:/data/db
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: on-failure
-    networks:
-      - cloudbooking_net
-
-  nginx:
-    image: cloudbooking-nginx:latest
-    ports:
-      - "80:80"
-    depends_on:
-      - app
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: on-failure
-    networks:
-      - cloudbooking_net
-
-volumes:
-  cloudbooking_data:
-  mongo_data:
-
-networks:
-  cloudbooking_net:
-    driver: overlay
+nginx:
+  image: nginx:alpine
+  ports:
+    - "8080:8080"
+  volumes:
+    - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    - ./web:/usr/share/nginx/html:ro
+  depends_on:
+    - app
+  deploy:
+    replicas: 1
+    restart_policy:
+      condition: on-failure
+  networks:
+    - cloudbooking_net
