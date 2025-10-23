@@ -1,7 +1,37 @@
+# cloudbooking-stack.yml
+version: "3.8"
+
+services:
+  app:
+    image: cloudbooking:latest
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+    networks:
+      - cloudbooking_net
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  mongo:
+    image: mongo:6
+    command: ["--bind_ip_all"]
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - cloudbooking_net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
   nginx:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8080:80"  # 外 8080 -> 内 80
     volumes:
       - /opt/app/cloudbooking/nginx.conf:/etc/nginx/nginx.conf:ro
       - /opt/app/cloudbooking/web:/usr/share/nginx/html:ro
@@ -13,3 +43,10 @@
       replicas: 1
       restart_policy:
         condition: on-failure
+
+volumes:
+  mongo_data: {}
+
+networks:
+  cloudbooking_net:
+    driver: overlay
