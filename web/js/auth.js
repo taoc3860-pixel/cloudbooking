@@ -50,7 +50,7 @@ async function login() {
     const data = await window.apiFetch("/api/auth/login", "POST", { username, password });
     if (!data?.token) throw new Error("No token returned by server.");
     localStorage.setItem("token", data.token);
-    await Promise.resolve();       // ensure storage flush
+    await Promise.resolve();
     location.replace("dashboard.html");
   } catch (err) {
     alert("Login failed: " + err.message);

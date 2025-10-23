@@ -11,7 +11,6 @@ function signToken(user) {
   );
 }
 
-// 注册
 exports.register = async (req, res) => {
   try {
     const { username, password } = req.body || {};
@@ -28,7 +27,6 @@ exports.register = async (req, res) => {
     const newUser = await User.create({ username, password: hashed, role: "user" });
 
     const token = signToken(newUser);
-    // 关键：直接返回 { token }
     return res.status(201).json({
       ok: true,
       token,
@@ -40,7 +38,6 @@ exports.register = async (req, res) => {
   }
 };
 
-// 登录
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body || {};
@@ -59,7 +56,6 @@ exports.login = async (req, res) => {
     }
 
     const token = signToken(user);
-    // 关键：直接返回 { token }
     return res.status(200).json({
       ok: true,
       token,
@@ -71,7 +67,6 @@ exports.login = async (req, res) => {
   }
 };
 
-// 可选：获取当前用户
 exports.me = async (req, res) => {
   const u = req.user;
   return res.json({ ok: true, user: { id: u._id, username: u.username, role: u.role } });

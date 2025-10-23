@@ -1,6 +1,6 @@
 export async function apiFetch(path, method = "GET", body) {
   const headers = { "Content-Type": "application/json" };
-  const token = localStorage.getItem("token");   // 每次现读
+  const token = localStorage.getItem("token");
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const resp = await fetch(`/api${path}`, {

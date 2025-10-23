@@ -1,4 +1,3 @@
-// Unified apiFetch
 async function apiFetch(path, method = "GET", body) {
   const token = localStorage.getItem("token");
   const headers = { "Content-Type": "application/json" };
@@ -27,7 +26,6 @@ async function apiFetch(path, method = "GET", body) {
   return isJSON ? res.json() : res.text();
 }
 
-/* ---------- Elements (assigned on DOMContentLoaded) ---------- */
 let elUserName, elLogout, elRoomSel, elDate, elStart, elEnd, elNotes, elForm, elFormMsg, elSlots, elRoomsList;
 let elSearchId, elBtnSearch, elSearchRes;
 
@@ -156,7 +154,7 @@ function renderSearchedBooking(b) {
   });
 }
 
-/* ---------- API calls ---------- */
+// API calls
 async function loadMe() {
   try {
     const me = await apiFetch("/api/auth/me");
@@ -250,7 +248,7 @@ function setDefaultDateTime() {
   elEnd.value = `${pad2(endH)}:${m2}`;
 }
 
-/* ---------- Boot: verify first, then load ---------- */
+// Boot: verify first, then load 
 window.addEventListener("DOMContentLoaded", async () => {
   // elements
   elUserName  = document.getElementById("user-name");
