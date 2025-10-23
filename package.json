@@ -1,0 +1,19 @@
+{
+  "name": "cloudbooking",
+  "version": "1.0.0",
+  "description": "A minimal cloud-based meeting booking application",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "2.8.5",
+    "dotenv": "17.2.3",
+    "express": "5.1.0",
+    "jsonwebtoken": "9.0.2",
+    "mongoose":"8.19.2",
+    "bcrypt":"6.0.0",
+    "validator":"13.15.15"
+  }
+}
