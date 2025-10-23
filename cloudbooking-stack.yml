@@ -10,6 +10,7 @@ services:
       - .env
     volumes:
       - cloudbooking_data:/app/data
+    deploy:
       replicas: 3
       update_config:
         parallelism: 1
