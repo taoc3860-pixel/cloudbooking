@@ -1,4 +1,4 @@
-// server.js — localhost:5055，文件为真源 + 冲突校验 + 查询他人会议 + 加入/退出
+// server.js — 文件为真源 + 唯一字符串ID + 冲突校验 + 查询他人会议 + 加入/退出
 console.log("[BOOT]", __filename);
 require("dotenv").config();
 
@@ -9,14 +9,15 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 
 const app = express();
-const PORT = 5055; // 如需 5000 改这里
+const PORT = 5055;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
 app.use(express.json());
 
-/* ---------------- API 预检兜底 & 禁止缓存 + 实例指纹 ---------------- */
+/* ---------------- API 预检兜底 & 指纹 ---------------- */
 const jwtFp = crypto.createHash("sha256").update(String(JWT_SECRET)).digest("hex").slice(0, 8);
 
+// 仅 /api 走无缓存&预检
 app.use("/api", (req, res, next) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
@@ -25,9 +26,23 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-app.use((_, res, next) => {
+// 全部响应头打上实例与秘钥指纹
+app.use((req, res, next) => {
   res.setHeader("X-App-Instance", `${process.pid}`);
   res.setHeader("X-JWT-Fp", jwtFp);
+  next();
+});
+
+// 如果请求里带了 Authorization，这里顺便把当前用户打在响应头上（便于定位换账号不生效的问题）
+app.use((req, res, next) => {
+  const h = req.headers.authorization || "";
+  if (h.startsWith("Bearer ")) {
+    try {
+      const p = jwt.verify(h.slice(7).trim(), JWT_SECRET);
+      res.setHeader("X-User-Uid", p.uid || "");
+      res.setHeader("X-User-Name", p.username || "");
+    } catch {}
+  }
   next();
 });
 
@@ -41,7 +56,7 @@ app.use((req, res, next) => {
   next();
 });
 
-/* ---------------- 持久化：路径 & 通用读写 ---------------- */
+/* ---------------- 持久化路径 & 通用读写 ---------------- */
 const DATA_DIR = path.join(__dirname, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const BOOKINGS_FILE = path.join(DATA_DIR, "bookings.json");
@@ -56,7 +71,7 @@ async function loadJSON(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return fallback; }
 }
 
-/* ---------------- 时间与会议辅助 ---------------- */
+/* ---------------- 时间/会议辅助 ---------------- */
 function toMinutes(hhmm) {
   const [h, m] = String(hhmm).split(":").map(Number);
   return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
@@ -65,7 +80,7 @@ function toMinutes(hhmm) {
 function timesOverlap(s1, e1, s2, e2) {
   return Math.max(toMinutes(s1), toMinutes(s2)) < Math.min(toMinutes(e1), toMinutes(e2));
 }
-// 每次按需读取/写入——以文件为真源（支持多实例）
+// 文件为真源：每次使用都读/写 bookings.json
 async function readBookings() {
   try { return JSON.parse(await fs.readFile(BOOKINGS_FILE, "utf8")); } catch { return []; }
 }
@@ -73,12 +88,12 @@ async function writeBookings(arr) {
   await ensureDataDir();
   await fs.writeFile(BOOKINGS_FILE, JSON.stringify(arr, null, 2), "utf8");
 }
-// 全局唯一 ID：毫秒时间戳 + 4位随机
+// 全局唯一字符串 ID：毫秒时间戳 + 4位随机
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`; }
 
-/* ---------------- 内存态（仅用户保存在内存；会议走文件） ---------------- */
-let usersArr = [];     // [{uid, username, pass}]
-let usersMap = new Map(); // username -> user
+/* ---------------- 仅用户使用内存；会议走文件 ---------------- */
+let usersArr = [];
+let usersMap = new Map();
 let uidSeq = 1;
 
 async function bootstrapData() {
@@ -98,20 +113,21 @@ function auth(req, res, next) {
     console.warn("[AUTH] no/invalid Authorization header:", h ? h.slice(0, 20) + "..." : "(empty)");
     return res.status(401).json({ ok:false, message:"Missing or invalid Authorization header" });
   }
-  const token = h.slice(7).trim();
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(h.slice(7).trim(), JWT_SECRET);
     req.user = { uid: payload.uid, username: payload.username };
-    console.log(`[AUTH] ok uid=${req.user.uid} tokenLen=${token.length}`);
     next();
   } catch (e) {
-    console.error("[AUTH] verify failed:", e && e.message, "tokenLen=", token.length);
+    console.error("[AUTH] verify failed:", e && e.message);
     return res.status(401).json({ ok:false, message:"Invalid or expired token" });
   }
 }
 
-/* ========================= 1) API ========================= */
-// 调试端点
+/* ========================= API ========================= */
+// 版本与调试
+app.get("/api/version", (_req, res) => {
+  res.json({ version: "file-backed+string-id+nocache+userheaders", pid: process.pid, jwt_fp: jwtFp });
+});
 app.get("/api/debug", async (_req, res) => {
   const all = await readBookings();
   res.json({ ok:true, pid: process.pid, jwt_fp: jwtFp, users: usersArr.length, bookings: all.length, now: new Date().toISOString() });
@@ -128,7 +144,6 @@ app.post("/api/auth/register", async (req, res) => {
   const token = sign(user);
   res.status(201).json({ ok:true, token, uid:user.uid, username:user.username });
 });
-
 app.post("/api/auth/login", (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ ok:false, message:"username & password required" });
@@ -137,7 +152,6 @@ app.post("/api/auth/login", (req, res) => {
   const token = sign(user);
   res.json({ ok:true, token, uid:user.uid, username:user.username });
 });
-
 app.get("/api/auth/me", auth, (req, res) => {
   res.json({ ok:true, uid:req.user.uid, username:req.user.username });
 });
@@ -150,9 +164,8 @@ const rooms = [
 ];
 app.get("/api/rooms", (_req, res) => res.json(rooms));
 
-/* ---------------- Bookings（鉴权 & 文件为真源） ---------------- */
-
-// 我的会议（我创建或我加入的）
+/* --------- Bookings（文件为真源） --------- */
+// 我的会议/全部
 app.get("/api/bookings", auth, async (req, res) => {
   const all = await readBookings();
   const mine = req.query.mine === "1";
@@ -163,7 +176,7 @@ app.get("/api/bookings", auth, async (req, res) => {
   res.json(all);
 });
 
-// 创建（含时间冲突校验）
+// 创建（含冲突校验）
 app.post("/api/bookings", auth, async (req, res) => {
   const { roomId, date, start, end, notes } = req.body || {};
   if (!roomId || !date || !start || !end) return res.status(400).json({ ok:false, message:"Missing required fields" });
@@ -172,8 +185,6 @@ app.post("/api/bookings", auth, async (req, res) => {
   if (toMinutes(end) <= toMinutes(start)) return res.status(400).json({ ok:false, message:"End time must be later than start time" });
 
   const all = await readBookings();
-
-  // 同房间 + 同日 + 时间重叠 -> 409
   const conflict = all.find(b => b.roomId === roomId && b.date === date && timesOverlap(start, end, b.start, b.end));
   if (conflict) {
     return res.status(409).json({
@@ -206,7 +217,7 @@ app.get("/api/bookings/:id", auth, async (req, res) => {
   res.json({ ok:true, booking: b });
 });
 
-// 加入会议
+// 加入
 app.post("/api/bookings/:id/join", auth, async (req, res) => {
   const all = await readBookings();
   const idx = all.findIndex(x => String(x.id) === String(req.params.id));
@@ -219,7 +230,7 @@ app.post("/api/bookings/:id/join", auth, async (req, res) => {
   res.json({ ok:true, booking: b });
 });
 
-// 退出会议
+// 退出
 app.post("/api/bookings/:id/leave", auth, async (req, res) => {
   const all = await readBookings();
   const idx = all.findIndex(x => String(x.id) === String(req.params.id));
@@ -231,7 +242,7 @@ app.post("/api/bookings/:id/leave", auth, async (req, res) => {
   res.json({ ok:true, booking: b });
 });
 
-// 删除会议（仅创建者可删）
+// 删除（仅创建者）
 app.delete("/api/bookings/:id", auth, async (req, res) => {
   const all = await readBookings();
   const idx = all.findIndex(x => String(x.id) === String(req.params.id));
@@ -243,20 +254,27 @@ app.delete("/api/bookings/:id", auth, async (req, res) => {
   res.json({ ok:true, deleted: del.id });
 });
 
-// 健康检查
-app.get("/healthz", (_req, res) => res.json({ ok: true }));
+// 健康
+app.get("/healthz", (_req, res) => res.json({ ok:true }));
 
-/* ======================== 2) 静态（必须在后） ======================== */
+/* ---------------- 静态资源（禁止缓存，确保最新前端生效） ---------------- */
 const webPath = path.join(__dirname, "web");
 console.log("[STATIC DIR]", webPath);
-app.use(express.static(webPath, { fallthrough: true }));
+app.use(express.static(webPath, {
+  fallthrough: true,
+  setHeaders: (res, filePath) => {
+    if (/\.(html|js|css|json|map)$/.test(filePath)) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
 app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
 
-/* ============================== 启动 =============================== */
+/* ---------------- 启动 ---------------- */
 (async () => {
   await bootstrapData();
   console.log("[ENV] JWT_SECRET loaded:", !!process.env.JWT_SECRET, "(using fallback dev-secret =", JWT_SECRET === "dev-secret", ")");
-  app.listen(PORT, () => {
-    console.log(`✅ listening http://localhost:${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`✅ listening http://localhost:${PORT}`));
 })();
