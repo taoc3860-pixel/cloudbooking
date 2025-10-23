@@ -1,0 +1,31 @@
+# cloudbooking-stack.yml  (Docker Swarm stack file)
+version: "3.8"
+
+services:
+  app:
+    image: cloudbooking:latest
+    ports:
+      - "5055:5055"
+    env_file:
+      - .env
+    volumes:
+      - cloudbooking_data:/app/data
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      placement:
+        max_replicas_per_node: 3
+    networks:
+      - cloudbooking_net
+
+volumes:
+  cloudbooking_data:
+
+networks:
+  cloudbooking_net:
+    driver: overlay
