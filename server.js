@@ -92,7 +92,10 @@ app.post("/api/auth/register", async (req, res) => {
   const user = { uid: "u" + (uidSeq++), username, pass: password }; // demo：明文
   usersArr.push(user); usersMap.set(username, user);
   await saveJSON(USERS_FILE, usersArr);
-  res.status(201).json({ ok:true, uid:user.uid, username:user.username });
+
+  // ✅ 关键改动：注册也返回 token，前端 register() 能直接拿到 data.token
+  const token = sign(user);
+  res.status(201).json({ ok:true, token, uid:user.uid, username:user.username });
 });
 
 app.post("/api/auth/login", (req, res) => {
@@ -199,6 +202,7 @@ app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
 /* ============================== 启动 =============================== */
 (async () => {
   await bootstrapData();
+  console.log("[ENV] JWT_SECRET loaded:", !!process.env.JWT_SECRET, "(using fallback dev-secret =", JWT_SECRET === "dev-secret", ")");
   app.listen(PORT, () => {
     console.log(`✅ listening http://localhost:${PORT}`);
   });
