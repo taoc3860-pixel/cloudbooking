@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Dashboard · Room Booker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body class="dashboard-page">
+  <div class="container">
+    <h1>Meeting Rooms</h1>
+
+    <p>Hello, <strong id="user-name">Loading…</strong></p>
+    <button id="logout-btn">Logout</button>
+
+    <h2>Available Rooms</h2>
+    <div id="rooms-list">Loading…</div>
+
+    <h2>Create a Booking</h2>
+    <form id="form-book">
+      <label>Room</label>
+      <select id="room">
+        <option value="" disabled selected>Loading…</option>
+      </select>
+
+      <label>Date</label>
+      <input id="date" type="date" />
+
+      <div style="display:flex; gap:10px;">
+        <div style="flex:1">
+          <label>Start</label>
+          <input id="start" type="time" />
+        </div>
+        <div style="flex:1">
+          <label>End</label>
+          <input id="end" type="time" />
+        </div>
+      </div>
+
+      <label>Notes</label>
+      <textarea id="notes" rows="2" placeholder="Optional"></textarea>
+
+      <button type="submit">Create</button>
+      <p id="form-msg"></p>
+    </form>
+
+    <h2>My Bookings</h2>
+    <div id="slot-list">Loading…</div>
+
+    <h2>Find Booking by ID</h2>
+    <div class="slot-item">
+      <div style="display:flex; gap:8px;">
+        <input id="search-id" placeholder="Enter booking ID (e.g., 3)" />
+        <button id="btn-search">Search</button>
+      </div>
+      <div id="search-result" class="row muted">No result.</div>
+    </div>
+  </div>
+
+  <script src="./js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    image: room-booker:latest
+    container_name: room-booker
+    ports:
+      - "5055:5055"          # 外部端口:容器端口
+    environment:
+      NODE_ENV: "production"
+      PORT: "5055"
+      JWT_SECRET: "${JWT_SECRET}"   # 从宿主环境或 .env 注入
+    volumes:
+      - data:/app/data       # 持久化 users.json / bookings.json
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5055/healthz"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  data:
