@@ -1,7 +1,6 @@
 // controllers/authController.js
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
-const User = require("../models/User"); 
+const User = require("../models/User");
 
 function signToken(user) {
   return jwt.sign(
@@ -11,30 +10,27 @@ function signToken(user) {
   );
 }
 
-// 注册
 exports.register = async (req, res) => {
   try {
-    const { username, password } = req.body || {};
-    if (!username || !password)
+    const { username, password, email } = req.body || {};
+    if (!username || !password) {
       return res.status(400).json({ ok: false, message: "username & password required" });
+    }
 
-    const existing = await User.findOne({ username });
-    if (existing)
+    const exists = await User.findOne({ username });
+    if (exists) {
       return res.status(409).json({ ok: false, message: "User already exists" });
+    }
 
-    const hashed = await bcrypt.hash(password, 10);
-    const newUser = await User.create({
-      username,
-      password: hashed,
-      role: "user",
-    });
-
+    const newUser = await User.create({ username, password, email }); 
     const token = signToken(newUser);
+
     return res.status(201).json({
       ok: true,
       token,
       uid: newUser._id,
       username: newUser.username,
+      role: newUser.role,
     });
   } catch (err) {
     console.error("Register error:", err);
@@ -45,16 +41,22 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body || {};
-    if (!username || !password)
+    if (!username || !password) {
       return res.status(400).json({ ok: false, message: "username & password required" });
+    }
 
-    const user = await User.findOne({ username });
-    if (!user)
+    const user = await User.findOne({ username }).select("+password");
+    if (!user) {
       return res.status(401).json({ ok: false, message: "Invalid credentials" });
+    }
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid)
+    const valid = await user.comparePassword(password);
+    if (!valid) {
       return res.status(401).json({ ok: false, message: "Invalid credentials" });
+    }
+
+    user.lastLoginAt = new Date();
+    await user.save();
 
     const token = signToken(user);
     return res.json({
@@ -62,6 +64,7 @@ exports.login = async (req, res) => {
       token,
       uid: user._id,
       username: user.username,
+      role: user.role,
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -72,8 +75,7 @@ exports.login = async (req, res) => {
 exports.me = async (req, res) => {
   try {
     const user = await User.findById(req.user.uid).select("-password");
-    if (!user)
-      return res.status(404).json({ ok: false, message: "User not found" });
+    if (!user) return res.status(404).json({ ok: false, message: "User not found" });
     return res.json({
       ok: true,
       uid: user._id,

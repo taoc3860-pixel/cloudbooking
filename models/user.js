@@ -1,6 +1,6 @@
 // models/User.js
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const validator = require("validator");
 
 const userSchema = new mongoose.Schema(
@@ -14,11 +14,7 @@ const userSchema = new mongoose.Schema(
       maxlength: 32,
       match: [/^[a-zA-Z0-9_.-]+$/, "Invalid username format"],
     },
-    displayName: {
-      type: String,
-      trim: true,
-      maxlength: 64,
-    },
+    displayName: { type: String, trim: true, maxlength: 64 },
     email: {
       type: String,
       trim: true,
@@ -28,7 +24,7 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       trim: true,
-      validate: (v) => !v || validator.isMobilePhone(v + "", "any"),
+      validate: (v) => !v || validator.isMobilePhone(String(v), "any"),
     },
     password: {
       type: String,
