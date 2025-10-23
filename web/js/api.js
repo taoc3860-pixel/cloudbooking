@@ -1,47 +1,23 @@
-// Automatically match the current port using relative paths
-const API_BASE = "/api";
-
-window.apiFetch = async function apiFetch(path, method = "GET", body = null) {
-  const url = path.startsWith("/api/") ? path : `${API_BASE}${path.startsWith("/") ? path : "/" + path}`;
-
-  // set header
+// api.js —— 所有请求都用它
+async function apiFetch(path, method = "GET", body) {
   const headers = { "Content-Type": "application/json" };
+  // ✅ 每次调用时，现从 localStorage 取 token，不要在模块顶层缓存
   const token = localStorage.getItem("token");
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  let res;
-  try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (err) {
-    throw new Error("Failed to fetch — Please verify that the server is running.");
-  }
+  const resp = await fetch(`/api${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
-  // 
-  if (res.status === 401) {
-    localStorage.removeItem("token");
-    window.location.href = "index.html";
-    return;
-  }
+  // 尝试解析 JSON（有些错误响应未必是 JSON）
+  let data = null;
+  try { data = await resp.json(); } catch { data = null; }
 
-  // Exception Handling
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const errData = await res.json();
-      msg = errData.message || errData.error || msg;
-    } catch {}
+  if (!resp.ok) {
+    const msg = (data && data.message) || `HTTP ${resp.status}`;
     throw new Error(msg);
   }
-
-  // 自动识别返回类型
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    return res.json();
-  } else {
-    return res.text();
-  }
-};
+  return data;
+}
