@@ -2,16 +2,29 @@ version: "3.8"
 
 services:
   app:
-    image: cloudbooking:latest
+    image: yourrepo/cloudbooking-api:1.0.0
     env_file:
       - .env
-    depends_on: [mongo]
     networks: [cloudbooking_net]
     deploy:
-      replicas: 3
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        monitor: 10s
+        failure_action: rollback
+        max_failure_ratio: 0.1
+      rollback_config:
+        parallelism: 1
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5055/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   mongo:
     image: mongo:6
@@ -23,6 +36,11 @@ services:
       replicas: 1
       restart_policy:
         condition: on-failure
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   nginx:
     image: nginx:alpine
@@ -30,12 +48,24 @@ services:
       - "8080:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on: [app]
     networks: [cloudbooking_net]
     deploy:
-      replicas: 1
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        monitor: 10s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: stop-first
       restart_policy:
         condition: on-failure
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   mongo_data: {}
