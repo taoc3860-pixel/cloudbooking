@@ -1,58 +1,18 @@
-version: "3.9"
-
 services:
-  mongo:
-    image: mongo:7
-    command: ["--bind_ip_all"]
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-
   app:
-    # 本地构建应用镜像；构建后镜像名会是 cloudbooking:0.7.0
     build:
       context: .
       dockerfile: Dockerfile
-    image: cloudbooking:0.7.0
-    env_file:
-      - .env
-    environment:
-      # 兜底：即使 .env 缺字段，也给默认值
-      PORT: "5055"
-      NODE_ENV: "production"
-      JWT_SECRET: "${JWT_SECRET:-change_this_to_a_long_random_secret}"
-      MONGODB_URI: "${MONGODB_URI:-mongodb://mongo:27017/cloudbooking}"
-    depends_on:
-      mongo:
-        condition: service_healthy
+    image: cloudbooking:0.8.0
+    env_file: [.env]
     ports:
       - "5055:5055"
-    healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:5055/health || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 15
 
   nginx:
     image: nginx:alpine
-    depends_on:
-      - app
     ports:
       - "8080:80"
+    depends_on: [app]
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./web:/usr/share/nginx/html:ro
-    healthcheck:
-      test: ["CMD", "sh", "-c", "wget -qO- http://localhost/ || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 15
-
-volumes:
-  mongo_data:
