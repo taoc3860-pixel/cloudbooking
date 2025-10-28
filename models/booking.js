@@ -1,6 +1,9 @@
 // models/Booking.js
 const mongoose = require("mongoose");
 
+// Keep in sync with frontend list of rooms
+const roomIds = ["r1", "r2", "r3"];
+
 const bookingSchema = new mongoose.Schema(
   {
     // owner/provider of the time slot
@@ -21,6 +24,9 @@ const bookingSchema = new mongoose.Schema(
 
     location: { type: String, trim: true, maxlength: 120 }, // optional
     notes: { type: String, maxlength: 500 },
+
+    // IMPORTANT: persist the room id; otherwise Mongoose strict mode drops it
+    roomId: { type: String, enum: roomIds, required: true },
     // deletedAt: { type: Date, default: null }, // optional soft-delete flag
   },
   { timestamps: true }
