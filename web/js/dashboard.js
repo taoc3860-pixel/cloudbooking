@@ -80,7 +80,6 @@ function renderBookings(list = []) {
       ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap: wrap;">
         <button type="button" data-act="cancel">Delete (owner)</button>
-        <button type="button" data-act="copy-id">Copy ID</button>
       </div>
     </div>
   `).join("");
