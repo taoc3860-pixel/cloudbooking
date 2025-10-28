@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   app:
-    image: cloudbooking:v0.2.0   # 部署时改版本号实现 update/rollback
+    image: cloudbooking:v0.3.0   # 部署时改版本号实现 update/rollback
     env_file:
       - .env
     depends_on: [mongo]
