@@ -1,22 +1,27 @@
-// web/auth.js — frontend API layer (with /api prefix)
+// web/js/auth.js — use /api prefix everywhere
 const API_BASE = "/api";
 
-function apiFetch(path, method = "GET", body = null, withAuth = false) {
+async function apiFetch(path, method = "GET", body = null, withAuth = false) {
   const headers = { "Content-Type": "application/json" };
   if (withAuth) {
     const t = localStorage.getItem("token");
     if (t) headers.Authorization = `Bearer ${t}`;
   }
-  const opts = { method, headers };
-  if (body) opts.body = JSON.stringify(body);
-
-  return fetch(`${API_BASE}${path}`, opts).then(async (r) => {
-    const text = await r.text();
-    if (!r.ok) throw new Error(text || r.statusText);
-    try { return JSON.parse(text); } catch { return {}; }
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
   });
+
+  // 401 -> 清掉本地 token
+  if (res.status === 401) localStorage.removeItem("token");
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || res.statusText);
+  try { return JSON.parse(text); } catch { return {}; }
 }
 
+// 切换表单
 function showRegister() {
   document.getElementById("form-login").style.display = "none";
   document.getElementById("form-register").style.display = "block";
@@ -26,6 +31,7 @@ function showLogin() {
   document.getElementById("form-login").style.display = "block";
 }
 
+// 登录
 async function login() {
   const username = document.getElementById("login-username").value.trim();
   const password = document.getElementById("login-password").value.trim();
@@ -41,9 +47,10 @@ async function login() {
   }
 }
 
+// 注册
 async function register() {
   const username = document.getElementById("reg-username").value.trim();
-  const email = document.getElementById("reg-email").value.trim();
+  const email    = document.getElementById("reg-email").value.trim();
   const password = document.getElementById("reg-password").value.trim();
   try {
     if (!username || !password) throw new Error("Username and password required.");
