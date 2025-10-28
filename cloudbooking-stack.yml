@@ -2,10 +2,15 @@ version: "3.9"
 
 services:
   app:
-    image: cloudbooking:v0.6.0
+    # 用你“实际存在的镜像标签”
+    # 你目前成功构建的是 GHCR 的 0.1.0；0.6.0 还没有
+    image: ghcr.io/taoc3860-pixel/cloudbooking:0.1.0
     env_file:
       - .env
-    depends_on: [mongo]
+    environment:
+      - PORT=5055
+      # 如需临时排障可开启：
+      # - MONGOOSE_DEBUG=1
     networks: [cloudbooking_net]
     deploy:
       replicas: 3
@@ -15,40 +20,14 @@ services:
         order: start-first
         monitor: 10s
         failure_action: rollback
-        max_failure_ratio: 0.1
-      rollback_config:
-        parallelism: 1
-        delay: 10s
-        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5055/health"]
+      # 你的后端是 /healthz，不是 /health
+      test: ["CMD", "wget", "-qO-", "http://localhost:5055/healthz"]
       interval: 10s
       timeout: 3s
-      retries: 5
-
-  mongo:
-    image: mongo:6
-    command: ["--bind_ip_all"]
-    volumes:
-      - mongo_data:/data/db
-    networks: [cloudbooking_net]
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: on-failure
-      update_config:
-        parallelism: 1
-        order: start-first
-      rollback_config:
-        parallelism: 1
-        order: stop-first
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 15s
-      timeout: 5s
       retries: 5
 
   nginx:
@@ -67,9 +46,6 @@ services:
         order: start-first
         monitor: 10s
         failure_action: rollback
-      rollback_config:
-        parallelism: 1
-        order: stop-first
       restart_policy:
         condition: on-failure
     healthcheck:
@@ -77,9 +53,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-
-volumes:
-  mongo_data: {}
 
 networks:
   cloudbooking_net:
