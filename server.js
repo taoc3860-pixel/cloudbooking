@@ -7,6 +7,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 
+// 需要你的 models/db.js 导出 connectDB, isConnected
 const { connectDB, isConnected } = require("./models/db");
 
 const app = express();
@@ -17,7 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 app.use(cors());
 app.use(express.json());
 
-// Debug-friendly headers
+// Debug 头，便于排查
 const jwtFp = crypto.createHash("sha256").update(String(JWT_SECRET)).digest("hex").slice(0, 8);
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -28,7 +29,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Attach user headers if token present
+// 若前端带 Bearer，则把解析到的用户信息放到响应头里方便调试
 app.use((req, res, next) => {
   const h = req.headers.authorization || "";
   if (h.startsWith("Bearer ")) {
@@ -41,7 +42,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Minimal request log
+// 简单请求日志
 app.use((req, res, next) => {
   const t0 = Date.now();
   res.on("finish", () => {
@@ -56,43 +57,40 @@ let bookingRoutes, roomRoutes;
 try { bookingRoutes = require("./routes/bookingRoutes"); } catch {}
 try { roomRoutes = require("./routes/roomRoutes"); } catch {}
 
-// Health (works even if DB not yet connected)
-app.get("/api/healthz", (_req, res) =>
-  res.json({ ok: true, db: !!isConnected() })
-);
-app.get("/healthz", (_req, res) =>
-  res.json({ ok: true, db: !!isConnected() })
-);
+// 健康检查：即便 DB 暂未连上也返回 200（db 字段反映状态）
+app.get("/api/healthz", (_req, res) => res.json({ ok: true, db: !!isConnected() }));
+app.get("/healthz",   (_req, res) => res.json({ ok: true, db: !!isConnected() }));
 
-// API prefix
+// 只挂 /api 前缀（你的前端已改为 /api/...）
 app.use("/api/auth", authRoutes);
 if (bookingRoutes) app.use("/api/bookings", bookingRoutes);
-if (roomRoutes) app.use("/api/rooms", roomRoutes);
+if (roomRoutes)    app.use("/api/rooms",    roomRoutes);
 
-// Static frontend via Express
+// 静态页面（由 Express 提供，Nginx 反代 / 到这里）
 const webPath = path.join(__dirname, "web");
 app.use(express.static(webPath));
 app.get("/", (_req, res) => res.sendFile(path.join(webPath, "index.html")));
 
-/* ===== Start server first ===== */
+/* ===== 关键修复：先启动 HTTP，再后台重试连接 DB ===== */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ HTTP server up at http://localhost:${PORT}`);
 });
 
-/* ===== Then connect DB in background with retries ===== */
+// 连接 DB 的外层重试，不再因为临时失败而退出进程
 (async function connectWithRetry() {
   const maxAttempts = 20;
-  const base = 1500; // ms
+  const baseMs = 1500; // 线性退避，最多 10s 间隔
   for (let i = 1; i <= maxAttempts; i++) {
     try {
-      await connectDB(1); // let models/db.js handle a single attempt
+      // 由 models/db.js 执行一次连接尝试；失败抛错由此处接管重试
+      await connectDB(1);
       console.log("[DB] ✅ Connected");
       return;
     } catch (err) {
-      const delay = Math.min(10000, base * i); // linear backoff up to 10s
+      const delay = Math.min(10000, baseMs * i);
       console.error(`[DB] ❌ connect failed (attempt ${i}/${maxAttempts}): ${err?.message || err}`);
       if (i === maxAttempts) {
-        console.error("[DB] giving up; HTTP stays online for health/proxy, but DB-backed routes will fail until DB recovers.");
+        console.error("[DB] giving up; HTTP stays online; DB-backed routes will fail until DB recovers.");
         return;
       }
       await new Promise(r => setTimeout(r, delay));
