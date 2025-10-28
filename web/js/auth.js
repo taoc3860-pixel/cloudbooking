@@ -1,38 +1,22 @@
-// Global apiFetch for login/register pages
-(function ensureApiFetch() {
-  if (!window.apiFetch) {
-    window.apiFetch = async function apiFetch(path, method = "GET", body) {
-      const token = localStorage.getItem("token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
+// web/auth.js — frontend API layer (with /api prefix)
+const API_BASE = "/api";
 
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-
-      if (res.status === 401) localStorage.removeItem("token");
-
-      const ct = res.headers.get("content-type") || "";
-      const isJSON = ct.includes("application/json");
-
-      if (!res.ok) {
-        if (isJSON) {
-          const j = await res.json().catch(() => ({}));
-          throw new Error(j.message || j.error || `HTTP ${res.status}`);
-        } else {
-          const t = await res.text().catch(() => "");
-          throw new Error(t || `HTTP ${res.status}`);
-        }
-      }
-
-      return isJSON ? res.json() : res.text();
-    };
+function apiFetch(path, method = "GET", body = null, withAuth = false) {
+  const headers = { "Content-Type": "application/json" };
+  if (withAuth) {
+    const t = localStorage.getItem("token");
+    if (t) headers.Authorization = `Bearer ${t}`;
   }
-})();
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
 
-// Switch Form
+  return fetch(`${API_BASE}${path}`, opts).then(async (r) => {
+    const text = await r.text();
+    if (!r.ok) throw new Error(text || r.statusText);
+    try { return JSON.parse(text); } catch { return {}; }
+  });
+}
+
 function showRegister() {
   document.getElementById("form-login").style.display = "none";
   document.getElementById("form-register").style.display = "block";
@@ -47,10 +31,10 @@ async function login() {
   const password = document.getElementById("login-password").value.trim();
   try {
     if (!username || !password) throw new Error("Username and password required.");
-    const data = await window.apiFetch("/api/auth/login", "POST", { username, password });
+    const data = await apiFetch("/auth/login", "POST", { username, password });
     if (!data?.token) throw new Error("No token returned by server.");
     localStorage.setItem("token", data.token);
-    await Promise.resolve();
+    alert("Login success");
     location.replace("dashboard.html");
   } catch (err) {
     alert("Login failed: " + err.message);
@@ -59,14 +43,14 @@ async function login() {
 
 async function register() {
   const username = document.getElementById("reg-username").value.trim();
-  const email    = document.getElementById("reg-email").value.trim();
+  const email = document.getElementById("reg-email").value.trim();
   const password = document.getElementById("reg-password").value.trim();
   try {
     if (!username || !password) throw new Error("Username and password required.");
-    const data = await window.apiFetch("/api/auth/register", "POST", { username, email, password });
+    const data = await apiFetch("/auth/register", "POST", { username, email, password });
     if (data?.token) {
       localStorage.setItem("token", data.token);
-      await Promise.resolve();
+      alert("Register success!");
       location.replace("dashboard.html");
     } else {
       alert("Register success! Please login now.");
