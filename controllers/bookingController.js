@@ -1,6 +1,6 @@
 // controllers/bookingController.js
 const mongoose = require("mongoose");
-const Booking = require("../models/booking"); // 大小写修正
+const Booking = require("../models/booking"); // 大小写修正：确保文件名为 Booking.js
 
 // Create an available slot for the current user (creator).
 // Body: { startTime, endTime, location?, notes? }
@@ -23,7 +23,31 @@ exports.createSlot = async (req, res) => {
   }
 };
 
-// List slots created by current user.
+// ===== NEW: list both "mine" (created & reserved) in one call =====
+exports.listMine = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const [created, reserved] = await Promise.all([
+      Booking.find({ creator: req.user._id })
+        .sort({ startTime: 1 })
+        .populate("booker", "username email"),
+      Booking.find({
+        booker: req.user._id,
+        status: "booked",
+        endTime: { $gte: now },
+      })
+        .sort({ startTime: 1 })
+        .populate("creator", "username email"),
+    ]);
+
+    return res.json({ ok: true, created, reserved });
+  } catch (e) {
+    return res.status(400).json({ ok: false, message: e.message });
+  }
+};
+
+// List slots created by current user (optional filters)
 exports.listMySlots = async (req, res) => {
   const creator = req.user._id;
   const { status, from, to } = req.query;
@@ -82,7 +106,7 @@ exports.reserve = async (req, res) => {
       return res.status(400).json({ ok: false, message: "Invalid slotId" });
     }
 
-    // prevent creator booking their own slot (optional)
+    // prevent creator booking their own slot (optional rule)
     const slot = await Booking.findById(slotId);
     if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });
     if (slot.creator.toString() === req.user._id.toString()) {
@@ -99,7 +123,8 @@ exports.reserve = async (req, res) => {
   }
 };
 
-// Cancel a slot
+// ===== Tightened: Cancel a slot (CREATOR ONLY) =====
+// 现在只允许创建者取消（状态置为 cancelled），booker 不能用此接口取消。
 exports.cancel = async (req, res) => {
   try {
     const { slotId } = req.body;
@@ -112,14 +137,41 @@ exports.cancel = async (req, res) => {
     if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });
 
     const isCreator = slot.creator.toString() === req.user._id.toString();
-    const isBooker = slot.booker && slot.booker.toString() === req.user._id.toString();
-    if (!isCreator && !isBooker) {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
+    if (!isCreator) {
+      return res.status(403).json({ ok: false, message: "Only creator can cancel this slot" });
     }
 
     const updated = await Booking.cancel({ slotId });
     res.json({ ok: true, booking: updated });
   } catch (e) {
     res.status(400).json({ ok: false, message: e.message });
+  }
+};
+
+// ===== NEW: Hard delete a slot (CREATOR ONLY) =====
+// 仅允许创建者删除；若已被预订，建议阻止硬删（避免误删用户预约）
+exports.remove = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ ok: false, message: "Invalid booking id" });
+    }
+    const slot = await Booking.findById(id);
+    if (!slot) return res.status(404).json({ ok: false, message: "Booking not found" });
+
+    const isCreator = slot.creator.toString() === req.user._id.toString();
+    if (!isCreator) {
+      return res.status(403).json({ ok: false, message: "Only creator can delete this booking" });
+    }
+
+    // 若不想允许删除已预订的时段，可加下面一行保护
+    if (slot.status === "booked") {
+      return res.status(409).json({ ok: false, message: "Cannot delete a booked slot" });
+    }
+
+    await slot.deleteOne();
+    return res.json({ ok: true, deleted: id });
+  } catch (e) {
+    return res.status(400).json({ ok: false, message: e.message });
   }
 };
