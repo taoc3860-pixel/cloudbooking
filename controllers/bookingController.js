@@ -1,8 +1,9 @@
 // controllers/bookingController.js
 const mongoose = require("mongoose");
-const Booking = require("../models/booking");
+const Booking = require("../models/booking"); // 大小写修正
 
-//Create an available slot for the current user (creator).Body: { startTime, endTime, location?, notes? }
+// Create an available slot for the current user (creator).
+// Body: { startTime, endTime, location?, notes? }
 exports.createSlot = async (req, res) => {
   try {
     const { startTime, endTime, location, notes } = req.body;
@@ -22,7 +23,7 @@ exports.createSlot = async (req, res) => {
   }
 };
 
-//List slots created by current user. Query:?status=available|booked|cancelled&from=ISO&to=ISO
+// List slots created by current user.
 exports.listMySlots = async (req, res) => {
   const creator = req.user._id;
   const { status, from, to } = req.query;
@@ -39,10 +40,14 @@ exports.listMySlots = async (req, res) => {
   res.json({ ok: true, items });
 };
 
-//List available slots of a specific creator (by userId). Route: GET /api/bookings/by/:userId?from=ISO&to=ISO/
+// List available slots of a specific creator (by userId).
 exports.listByCreator = async (req, res) => {
   const { userId } = req.params;
   const { from, to } = req.query;
+
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return res.status(400).json({ ok: false, message: "Invalid userId" });
+  }
 
   const q = { creator: userId, status: "available" };
   if (from || to) {
@@ -55,7 +60,7 @@ exports.listByCreator = async (req, res) => {
   res.json({ ok: true, items });
 };
 
-//List my reservations as a booker (future first). Route: GET /api/bookings/my-reservations/
+// List my reservations as a booker (future first).
 exports.listMyReservations = async (req, res) => {
   const now = new Date();
   const items = await Booking.find({
@@ -68,13 +73,16 @@ exports.listMyReservations = async (req, res) => {
   res.json({ ok: true, items });
 };
 
-//Reserve a slot (only if it's still available). Body: { slotId }
+// Reserve a slot
 exports.reserve = async (req, res) => {
   try {
     const { slotId } = req.body;
     if (!slotId) return res.status(400).json({ ok: false, message: "slotId is required" });
+    if (!mongoose.Types.ObjectId.isValid(slotId)) {
+      return res.status(400).json({ ok: false, message: "Invalid slotId" });
+    }
 
-    // prevent creator booking their own slot (optional rule)
+    // prevent creator booking their own slot (optional)
     const slot = await Booking.findById(slotId);
     if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });
     if (slot.creator.toString() === req.user._id.toString()) {
@@ -91,11 +99,14 @@ exports.reserve = async (req, res) => {
   }
 };
 
-//Cancel a slot (creator or booker can cancel).Body: { slotId }
+// Cancel a slot
 exports.cancel = async (req, res) => {
   try {
     const { slotId } = req.body;
     if (!slotId) return res.status(400).json({ ok: false, message: "slotId is required" });
+    if (!mongoose.Types.ObjectId.isValid(slotId)) {
+      return res.status(400).json({ ok: false, message: "Invalid slotId" });
+    }
 
     const slot = await Booking.findById(slotId);
     if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });

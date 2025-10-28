@@ -8,12 +8,12 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "bcrypt": "6.0.0",
     "cors": "2.8.5",
-    "dotenv": "17.2.3",
+    "dotenv": "^17.2.3",
     "express": "5.1.0",
     "jsonwebtoken": "9.0.2",
-    "mongoose":"8.19.2",
-    "bcrypt":"6.0.0",
-    "validator":"13.15.15"
+    "mongoose": "8.19.2",
+    "validator": "13.15.15"
   }
 }

@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
       minlength: 3,
       maxlength: 32,
       match: [/^[a-zA-Z0-9_.-]+$/, "Invalid username format"],
+      index: true,
     },
     displayName: { type: String, trim: true, maxlength: 64 },
     email: {
@@ -20,6 +21,7 @@ const userSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       validate: (v) => !v || validator.isEmail(v),
+      index: true,
     },
     phone: {
       type: String,
@@ -32,7 +34,7 @@ const userSchema = new mongoose.Schema(
       minlength: 6,
       select: false,
     },
-    role: { type: String, enum: ["user", "admin"], default: "user" },
+    role: { type: String, enum: ["user", "admin"], default: "user", index: true },
     timezone: { type: String, default: "UTC" },
     isActive: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
