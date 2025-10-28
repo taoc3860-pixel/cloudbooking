@@ -61,10 +61,12 @@ try { roomRoutes = require("./routes/roomRoutes"); } catch {}
 app.get("/api/healthz", (_req, res) => res.json({ ok: true, db: !!isConnected() }));
 app.get("/healthz",   (_req, res) => res.json({ ok: true, db: !!isConnected() }));
 
-// 只挂 /api 前缀（你的前端已改为 /api/...）
-app.use("/api/auth", authRoutes);
-if (bookingRoutes) app.use("/api/bookings", bookingRoutes);
-if (roomRoutes)    app.use("/api/rooms",    roomRoutes);
+
+// 双挂载：既支持 /auth，也兼容 /api/auth（万一前端还没全改）
+app.use(["/auth", "/api/auth"], authRoutes);
+if (bookingRoutes) app.use(["/bookings", "/api/bookings"], bookingRoutes);
+if (roomRoutes)    app.use(["/rooms", "/api/rooms"],       roomRoutes);
+
 
 // 静态页面（由 Express 提供，Nginx 反代 / 到这里）
 const webPath = path.join(__dirname, "web");
