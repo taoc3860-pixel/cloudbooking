@@ -3,40 +3,48 @@ const mongoose = require("mongoose");
 
 const { MONGODB_URI, DB_NAME = "cloudbooking" } = process.env;
 
-// keep a single connection promise
-let ready = null;
+// Optional: silence deprecation warnings and tighten queries
+mongoose.set("strictQuery", true);
 
-function connectDB() {
+let ready = false;
+
+/**
+ * Connect to MongoDB Atlas using a single shared Mongoose instance.
+ */
+async function connectDB() {
   if (!MONGODB_URI) {
-    throw new Error(
-      "MONGODB_URI is missing. Put your Atlas SRV string in .env (MONGODB_URI=...)"
-    );
+    console.error("[Mongo] MONGODB_URI is missing. Put your Atlas SRV string in .env");
+    process.exit(1);
   }
-  if (!ready) {
-    // Recommended options for Atlas + Mongoose 7+
-    ready = mongoose.connect(MONGODB_URI, {
-      dbName: DB_NAME,
-      // Pool & topology
+
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      dbName: DB_NAME,                 // use logical DB name here
       maxPoolSize: 20,
       minPoolSize: 1,
-      serverSelectionTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 15000, // fail fast if cluster unreachable
       socketTimeoutMS: 45000,
-      // Let Mongoose use MongoDB Stable API v1 when available
-      // (works even if serverApi not set explicitly)
-      // retryWrites is typically handled by the connection string (?retryWrites=true)
     });
-
-    mongoose.connection.on("connected", () => {
-      console.log("[Mongo] connected to Atlas, db:", DB_NAME);
-    });
-    mongoose.connection.on("error", (e) => {
-      console.error("[Mongo] error:", e?.message || e);
-    });
-    mongoose.connection.on("disconnected", () => {
-      console.warn("[Mongo] disconnected");
-    });
+    ready = true;
+    console.log("[Mongo] connected to Atlas, db:", DB_NAME);
+  } catch (err) {
+    console.error("[Mongo] connection error:", err?.message || err);
+    process.exit(1); // do not keep app running without DB
   }
-  return ready;
+
+  // (Re)bind listeners once
+  const conn = mongoose.connection;
+  conn.on("error", (e) => console.error("[Mongo] runtime error:", e?.message || e));
+  conn.on("disconnected", () => console.warn("[Mongo] disconnected"));
 }
 
-module.exports = { connectDB };
+/** Return true if mongoose connection is ready. */
+function isConnected() {
+  return ready && mongoose.connection.readyState === 1;
+}
+
+module.exports = {
+  connectDB,
+  isConnected,
+  mongoose, // export the singleton so all models use the same instance
+};

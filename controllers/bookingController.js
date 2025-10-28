@@ -1,177 +1,168 @@
 // controllers/bookingController.js
-const mongoose = require("mongoose");
-const Booking = require("../models/booking"); // 大小写修正：确保文件名为 Booking.js
+const Booking = require("../models/booking");
 
-// Create an available slot for the current user (creator).
-// Body: { startTime, endTime, location?, notes? }
-exports.createSlot = async (req, res) => {
+// 你的房间列表（与前端一致）
+const rooms = [
+  { id: "r1", name: "Room A", capacity: 6,  location: "1F", tags: ["projector"] },
+  { id: "r2", name: "Room B", capacity: 10, location: "2F", tags: ["whiteboard"] },
+  { id: "r3", name: "Room C", capacity: 8,  location: "3F", tags: ["conference"] },
+];
+
+function parseUserId(req) {
+  // 你的 token 里 uid 是 Mongo _id 字符串；中间件可能把 user 放在 req.user / req.user.id / req.user._id
+  return req.user?.id || req.user?._id || req.user?.uid;
+}
+
+function toDateLocal(dateStr, hhmm) {
+  // 将 "YYYY-MM-DD" + "HH:MM" 转为本地时区 Date
+  const [y, m, d] = String(dateStr).split("-").map(Number);
+  const [hh, mm] = String(hhmm).split(":").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+  return dt;
+}
+
+function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function fmtHM(d)   { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+
+// 把模型文档映射成前端期望的 booking 对象
+function asClient(b) {
+  const start = new Date(b.startTime);
+  const end   = new Date(b.endTime);
+  // 选出房间名（如果前端需要 roomName）
+  const room = rooms.find(r => r.id === b.roomId);
+  return {
+    id: String(b._id),                      // 前端原来是 "时间戳-随机串"，现在用 _id 也行
+    uid: String(b.creator),                 // 作为 owner
+    roomId: b.roomId || "r1",
+    roomName: room ? room.name : (b.location || "Room"),
+    date: fmtDate(start),
+    start: fmtHM(start),
+    end: fmtHM(end),
+    notes: b.notes || "",
+    status: b.status === "booked" ? "confirmed" :
+            b.status === "cancelled" ? "cancelled" : "available",
+    participants: [
+      String(b.creator),
+      ...(b.booker ? [String(b.booker)] : [])
+    ]
+  };
+}
+
+// GET /api/bookings (?mine=1)
+exports.list = async (req, res) => {
   try {
-    const { startTime, endTime, location, notes } = req.body;
-    if (!startTime || !endTime) {
-      return res.status(400).json({ ok: false, message: "startTime and endTime are required" });
+    const userId = parseUserId(req);
+    const mine = req.query.mine === "1";
+    const filter = mine
+      ? { $or: [{ creator: userId }, { booker: userId }] }
+      : {};
+    const docs = await Booking.find(filter).sort({ startTime: 1 }).lean();
+    res.json(docs.map(asClient));
+  } catch (e) {
+    console.error("[Booking][list] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
+  }
+};
+
+// POST /api/bookings
+// body: { roomId, date:"YYYY-MM-DD", start:"HH:MM", end:"HH:MM", notes }
+exports.create = async (req, res) => {
+  try {
+    const userId = parseUserId(req);
+    const { roomId, date, start, end, notes } = req.body || {};
+    if (!roomId || !date || !start || !end) {
+      return res.status(400).json({ ok: false, message: "Missing required fields" });
     }
-    const slot = await Booking.createSlot({
-      creator: req.user._id,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
-      location,
-      notes,
+    const startTime = toDateLocal(date, start);
+    const endTime   = toDateLocal(date, end);
+    if (!(endTime > startTime)) {
+      return res.status(400).json({ ok: false, message: "End time must be later than start time" });
+    }
+
+    // 冲突：同一个 creator 的可用/已预定时段不能重叠
+    const hasConflict = await Booking.hasConflict(userId, startTime, endTime);
+    if (hasConflict) {
+      return res.status(409).json({ ok: false, message: "Time slot already booked for this user" });
+    }
+
+    // 你的原前端创建后就“确认”的语义，这里直接落地为 booked（创建人即为 booker）
+    const doc = await Booking.create({
+      creator: userId,
+      booker: userId,
+      startTime,
+      endTime,
+      status: "booked",
+      location: rooms.find(r => r.id === roomId)?.name || "",
+      notes: notes || "",
+      roomId, // 额外储存，方便返回
     });
-    res.json({ ok: true, slot });
+
+    res.json({ ok: true, booking: asClient(doc) });
   } catch (e) {
-    res.status(e.code === "TIME_CONFLICT" ? 409 : 400).json({ ok: false, message: e.message });
+    console.error("[Booking][create] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
   }
 };
 
-// ===== NEW: list both "mine" (created & reserved) in one call =====
-exports.listMine = async (req, res) => {
+// GET /api/bookings/:id
+exports.detail = async (req, res) => {
   try {
-    const now = new Date();
-
-    const [created, reserved] = await Promise.all([
-      Booking.find({ creator: req.user._id })
-        .sort({ startTime: 1 })
-        .populate("booker", "username email"),
-      Booking.find({
-        booker: req.user._id,
-        status: "booked",
-        endTime: { $gte: now },
-      })
-        .sort({ startTime: 1 })
-        .populate("creator", "username email"),
-    ]);
-
-    return res.json({ ok: true, created, reserved });
+    const doc = await Booking.findById(req.params.id).lean();
+    if (!doc) return res.status(404).json({ ok: false, message: "Booking not found" });
+    res.json({ ok: true, booking: asClient(doc) });
   } catch (e) {
-    return res.status(400).json({ ok: false, message: e.message });
+    console.error("[Booking][detail] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
   }
 };
 
-// List slots created by current user (optional filters)
-exports.listMySlots = async (req, res) => {
-  const creator = req.user._id;
-  const { status, from, to } = req.query;
-
-  const q = { creator };
-  if (status) q.status = status;
-  if (from || to) {
-    q.startTime = {};
-    if (from) q.startTime.$gte = new Date(from);
-    if (to) q.startTime.$lte = new Date(to);
-  }
-
-  const items = await Booking.find(q).sort({ startTime: 1 }).populate("booker", "username email");
-  res.json({ ok: true, items });
-};
-
-// List available slots of a specific creator (by userId).
-exports.listByCreator = async (req, res) => {
-  const { userId } = req.params;
-  const { from, to } = req.query;
-
-  if (!mongoose.Types.ObjectId.isValid(userId)) {
-    return res.status(400).json({ ok: false, message: "Invalid userId" });
-  }
-
-  const q = { creator: userId, status: "available" };
-  if (from || to) {
-    q.startTime = {};
-    if (from) q.startTime.$gte = new Date(from);
-    if (to) q.startTime.$lte = new Date(to);
-  }
-
-  const items = await Booking.find(q).sort({ startTime: 1 });
-  res.json({ ok: true, items });
-};
-
-// List my reservations as a booker (future first).
-exports.listMyReservations = async (req, res) => {
-  const now = new Date();
-  const items = await Booking.find({
-    booker: req.user._id,
-    status: "booked",
-    endTime: { $gte: now },
-  })
-    .sort({ startTime: 1 })
-    .populate("creator", "username email");
-  res.json({ ok: true, items });
-};
-
-// Reserve a slot
-exports.reserve = async (req, res) => {
+// POST /api/bookings/:id/join  -> 预定空闲时段（把自己设为 booker）
+exports.join = async (req, res) => {
   try {
-    const { slotId } = req.body;
-    if (!slotId) return res.status(400).json({ ok: false, message: "slotId is required" });
-    if (!mongoose.Types.ObjectId.isValid(slotId)) {
-      return res.status(400).json({ ok: false, message: "Invalid slotId" });
+    const userId = parseUserId(req);
+    const updated = await Booking.reserve({ slotId: req.params.id, bookerId: userId });
+    if (!updated) {
+      return res.status(409).json({ ok: false, message: "Already booked or not available" });
     }
-
-    // prevent creator booking their own slot (optional rule)
-    const slot = await Booking.findById(slotId);
-    if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });
-    if (slot.creator.toString() === req.user._id.toString()) {
-      return res.status(400).json({ ok: false, message: "Creator cannot reserve own slot" });
-    }
-
-    const updated = await Booking.reserve({ slotId, bookerId: req.user._id });
-    if (!updated) return res.status(409).json({ ok: false, message: "Already booked or unavailable" });
-
-    const populated = await updated.populate("creator", "username email");
-    res.json({ ok: true, booking: populated });
+    res.json({ ok: true, booking: asClient(updated) });
   } catch (e) {
-    res.status(400).json({ ok: false, message: e.message });
+    console.error("[Booking][join] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
   }
 };
 
-// ===== Tightened: Cancel a slot (CREATOR ONLY) =====
-// 现在只允许创建者取消（状态置为 cancelled），booker 不能用此接口取消。
-exports.cancel = async (req, res) => {
+// POST /api/bookings/:id/leave  -> 取消预定（booker 或 creator 都可取消）
+exports.leave = async (req, res) => {
   try {
-    const { slotId } = req.body;
-    if (!slotId) return res.status(400).json({ ok: false, message: "slotId is required" });
-    if (!mongoose.Types.ObjectId.isValid(slotId)) {
-      return res.status(400).json({ ok: false, message: "Invalid slotId" });
+    const userId = parseUserId(req);
+    const doc = await Booking.findById(req.params.id).lean();
+    if (!doc) return res.status(404).json({ ok: false, message: "Booking not found" });
+
+    if (String(doc.booker) !== String(userId) && String(doc.creator) !== String(userId)) {
+      return res.status(403).json({ ok: false, message: "Not allowed" });
     }
-
-    const slot = await Booking.findById(slotId);
-    if (!slot) return res.status(404).json({ ok: false, message: "Slot not found" });
-
-    const isCreator = slot.creator.toString() === req.user._id.toString();
-    if (!isCreator) {
-      return res.status(403).json({ ok: false, message: "Only creator can cancel this slot" });
-    }
-
-    const updated = await Booking.cancel({ slotId });
-    res.json({ ok: true, booking: updated });
+    const updated = await Booking.cancel({ slotId: req.params.id });
+    res.json({ ok: true, booking: asClient(updated) });
   } catch (e) {
-    res.status(400).json({ ok: false, message: e.message });
+    console.error("[Booking][leave] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
   }
 };
 
-// ===== NEW: Hard delete a slot (CREATOR ONLY) =====
-// 仅允许创建者删除；若已被预订，建议阻止硬删（避免误删用户预约）
+// DELETE /api/bookings/:id  -> 仅 creator 可删除
 exports.remove = async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ ok: false, message: "Invalid booking id" });
+    const userId = parseUserId(req);
+    const doc = await Booking.findById(req.params.id).lean();
+    if (!doc) return res.status(404).json({ ok: false, message: "Booking not found" });
+    if (String(doc.creator) !== String(userId)) {
+      return res.status(403).json({ ok: false, message: "Only owner can delete" });
     }
-    const slot = await Booking.findById(id);
-    if (!slot) return res.status(404).json({ ok: false, message: "Booking not found" });
-
-    const isCreator = slot.creator.toString() === req.user._id.toString();
-    if (!isCreator) {
-      return res.status(403).json({ ok: false, message: "Only creator can delete this booking" });
-    }
-
-    // 若不想允许删除已预订的时段，可加下面一行保护
-    if (slot.status === "booked") {
-      return res.status(409).json({ ok: false, message: "Cannot delete a booked slot" });
-    }
-
-    await slot.deleteOne();
-    return res.json({ ok: true, deleted: id });
+    await Booking.deleteOne({ _id: req.params.id });
+    res.json({ ok: true, deleted: req.params.id });
   } catch (e) {
-    return res.status(400).json({ ok: false, message: e.message });
+    console.error("[Booking][remove] error:", e);
+    res.status(500).json({ ok: false, message: "Server error" });
   }
 };

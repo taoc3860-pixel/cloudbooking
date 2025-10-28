@@ -1,32 +1,17 @@
 // routes/bookingRoutes.js
 const express = require("express");
-const ctrl = require("../controllers/bookingController");
-const auth = require("../middlewares/auth"); // must set req.user if token valid
-
 const router = express.Router();
+const auth = require("../middlewares/auth");
+const booking = require("../controllers/bookingController");
 
-// ===== NEW: 一次返回“我创建的”和“我预订到的”
-router.get("/mine", auth, ctrl.listMine);
+// /api/bookings
+router.get("/", auth, booking.list);           // ?mine=1
+router.post("/", auth, booking.create);
 
-// create an available slot (owner = current user)
-router.post("/slots", auth, ctrl.createSlot);
-
-// list slots created by current user (filter by status/time window)
-router.get("/my-slots", auth, ctrl.listMySlots);
-
-// list available slots of a specific creator
-router.get("/by/:userId", auth, ctrl.listByCreator);
-
-// list my reservations (as booker)
-router.get("/my-reservations", auth, ctrl.listMyReservations);
-
-// reserve a slot
-router.post("/reserve", auth, ctrl.reserve);
-
-// cancel a slot (CREATOR ONLY)
-router.post("/cancel", auth, ctrl.cancel);
-
-// ===== NEW: delete a slot (CREATOR ONLY, hard delete)
-router.delete("/:id", auth, ctrl.remove);
+// /api/bookings/:id
+router.get("/:id", auth, booking.detail);
+router.post("/:id/join", auth, booking.join);  // 将“加入”视为预定（booker）
+router.post("/:id/leave", auth, booking.leave);// 取消预定（仅 booker/creator）
+router.delete("/:id", auth, booking.remove);   // 仅 creator 可删
 
 module.exports = router;

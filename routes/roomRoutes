@@ -1,0 +1,13 @@
+// routes/roomRoutes.js
+const express = require("express");
+const router = express.Router();
+
+const rooms = [
+  { id: "r1", name: "Room A", capacity: 6,  location: "1F", tags: ["projector"] },
+  { id: "r2", name: "Room B", capacity: 10, location: "2F", tags: ["whiteboard"] },
+  { id: "r3", name: "Room C", capacity: 8,  location: "3F", tags: ["conference"] },
+];
+
+router.get("/", (_req, res) => res.json(rooms));
+
+module.exports = router;
