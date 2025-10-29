@@ -1,3 +1,4 @@
+/* ===== apiFetch (unchanged) ===== */
 async function apiFetch(path, method = "GET", body) {
   const token = localStorage.getItem("token");
   const headers = { "Content-Type": "application/json" };
@@ -20,12 +21,13 @@ async function apiFetch(path, method = "GET", body) {
   const isJSON = ct.includes("application/json");
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { msg = isJSON ? (await res.json()).message || msg : await res.text() || msg; } catch {}
+    try { msg = isJSON ? (await res.json()).message || msg : (await res.text()) || msg; } catch {}
     throw new Error(msg);
   }
   return isJSON ? res.json() : res.text();
 }
 
+/* ===== globals ===== */
 let elUserName, elLogout, elRoomSel, elDate, elStart, elEnd, elNotes, elForm, elFormMsg, elSlots, elRoomsList;
 let elSearchId, elBtnSearch, elSearchRes;
 
@@ -37,15 +39,60 @@ function escapeHtml(s) {
     .replaceAll("'", "&#39;");
 }
 function escapeAttr(s) { return escapeHtml(s).replaceAll("\"", "&quot;"); }
-
 function setPlaceholders() {
   elUserName.textContent = "Loading…";
   elRoomsList.textContent = "Loading…";
   elSlots.textContent = "Loading…";
 }
 
-/* ---------- Renderers ---------- */
+/* ===== helpers ===== */
+// normalize any array (ObjectId/string/mixed) into array of strings
+function toStrArr(arr) {
+  return Array.isArray(arr) ? arr.map(x => String(x)) : [];
+}
+
+/* ======== minimal additions for MyBookings buttons ======== */
+function normId(x) {
+  return x == null ? "" : String(x);
+}
+function pickUidLike(obj) {
+  // 兼容多种 owner/uid 字段命名
+  return normId(
+    (obj && (obj.uid ?? obj.id ?? obj._id ?? obj.userId ?? obj.ownerId ?? obj.createdBy)) ?? ""
+  );
+}
+function tryExtractUidFromToken() {
+  const t = localStorage.getItem("token");
+  if (!t || t.split(".").length !== 3) return "";
+  try {
+    const payload = JSON.parse(atob(t.split(".")[1]));
+    // token 里也做同样字段挑选
+    return pickUidLike(payload);
+  } catch {
+    return "";
+  }
+}
+/* ======== end minimal additions ======== */
+
+/* ===== room map for capacity lookup ===== */
+let ROOMS_MAP = {};
+function getCapacity(roomId) {
+  const r = ROOMS_MAP[roomId];
+  return r && typeof r.capacity === "number" ? r.capacity : 9999; // 保持你原来的默认值
+}
+
+/* ===== Renderers ===== */
 function renderRooms(rooms = []) {
+  // build map for capacity lookup
+  ROOMS_MAP = {};
+  if (Array.isArray(rooms)) {
+    for (const r of rooms) {
+      if (!r) continue;
+      const id = (r.id || r._id || "").toString();
+      if (id) ROOMS_MAP[id] = r;
+    }
+  }
+
   if (!Array.isArray(rooms) || rooms.length === 0) {
     elRoomsList.innerHTML = `<div class="slot-item">No rooms available.</div>`;
     elRoomSel.innerHTML = `<option value="" disabled selected>No rooms</option>`;
@@ -65,25 +112,46 @@ function renderRooms(rooms = []) {
   `).join("");
 }
 
+/* === My Bookings: ONLY Delete(owner) / Leave; NO Join === */
 function renderBookings(list = []) {
   if (!Array.isArray(list) || list.length === 0) {
     elSlots.innerHTML = `<div class="slot-item">You have no bookings.</div>`;
     return;
   }
-  elSlots.innerHTML = list.map(b => `
-    <div class="slot-item" data-id="${escapeHtml(String(b.id || ""))}">
-      <div><strong>${escapeHtml(b.roomName || "Room")}</strong></div>
-      <div>ID: <code>${escapeHtml(String(b.id || ""))}</code></div>
-      <div>${escapeHtml(b.date)} · ${escapeHtml(b.start)} - ${escapeHtml(b.end)}</div>
-      <div>Status: ${escapeHtml(b.status || "confirmed")}</div>
-      ${Array.isArray(b.participants) ? `<div>Participants: ${b.participants.length}</div>` : ""}
-      ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
-      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap: wrap;">
-        <button type="button" data-act="cancel">Delete (owner)</button>
-      </div>
-    </div>
-  `).join("");
 
+  const my = normId(localStorage.getItem("uid") || "");
+  elSlots.innerHTML = list.map(b => {
+    const parts = toStrArr(b.participants).map(normId);
+    const count = typeof b.participantCount === "number" ? b.participantCount : parts.length;
+    const joined = !!(my && parts.includes(my));
+    const isOwner = !!(my && pickUidLike(b) === my);
+    const cap = getCapacity(normId(b.roomId));
+
+    // My Bookings page: no Join
+    let actionBtn = "";
+    if (isOwner) {
+      actionBtn = `<button type="button" data-act="cancel">Delete (owner)</button>`;
+    } else if (joined) {
+      actionBtn = `<button type="button" data-act="leave">Leave</button>`;
+    } // else: no button
+
+    return `
+      <div class="slot-item" data-id="${escapeHtml(String(b.id || b._id || ""))}">
+        <div><strong>${escapeHtml(b.roomName || "Room")}</strong></div>
+        <div>ID: <code>${escapeHtml(String(b.id || b._id || ""))}</code></div>
+        <div>${escapeHtml(b.date)} · ${escapeHtml(b.start)} - ${escapeHtml(b.end)}</div>
+        <div>Status: ${escapeHtml(b.status || "confirmed")}</div>
+        <div>Participants: ${count}${Number.isFinite(cap) ? ` / ${cap}` : ""}</div>
+        ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
+        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap: wrap;">
+          ${actionBtn}
+          <button type="button" data-act="copy-id">Copy ID</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Owner delete
   elSlots.querySelectorAll('button[data-act="cancel"]').forEach(btn => {
     btn.addEventListener("click", async (e) => {
       const wrap = e.currentTarget.closest(".slot-item");
@@ -98,6 +166,8 @@ function renderBookings(list = []) {
       }
     });
   });
+
+  // Copy ID
   elSlots.querySelectorAll('button[data-act="copy-id"]').forEach(btn => {
     btn.addEventListener("click", async (e) => {
       const id = e.currentTarget.closest(".slot-item")?.dataset.id;
@@ -105,33 +175,76 @@ function renderBookings(list = []) {
       catch { alert("Copy failed"); }
     });
   });
+
+  // Leave (only rendered for joined && !owner)
+  elSlots.querySelectorAll('button[data-act="leave"]').forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.currentTarget.closest(".slot-item")?.dataset.id;
+      if (!id) return;
+      try {
+        await apiFetch(`/api/bookings/${encodeURIComponent(id)}/leave`, "POST");
+        await loadMyBookings();
+      } catch (err) {
+        alert("Leave failed: " + err.message);
+      }
+    });
+  });
 }
 
+/* === Search view: Join / Leave / Delete(owner) === */
 function renderSearchedBooking(b) {
   if (!b) {
     elSearchRes.innerHTML = `<div class="muted">No result.</div>`;
     return;
   }
-  const joined = Array.isArray(b.participants) && b.participants.includes(localStorage.getItem("uid"));
+  const my = String(localStorage.getItem("uid") || "");
+  const parts = toStrArr(b.participants);
+  const count = typeof b.participantCount === "number" ? b.participantCount : parts.length;
+  const joined = my && parts.includes(my);
+  const isOwner = my && String(b.uid || "") === my;
+  const cap = getCapacity(b.roomId);
+  const canJoin = !isOwner && !joined && count < cap;
+
+  const actionBtn = isOwner
+    ? `<button type="button" data-act="cancel">Delete (owner)</button>`
+    : (joined
+        ? `<button type="button" data-act="leave">Leave</button>`
+        : `<button type="button" data-act="join" ${canJoin ? "" : "disabled"}>Join</button>`);
+
   elSearchRes.innerHTML = `
     <div class="slot-item" data-id="${escapeHtml(String(b.id))}">
       <div><strong>${escapeHtml(b.roomName || "Room")}</strong></div>
       <div>ID: <code>${escapeHtml(String(b.id))}</code></div>
       <div>${escapeHtml(b.date)} · ${escapeHtml(b.start)} - ${escapeHtml(b.end)}</div>
       <div>Status: ${escapeHtml(b.status || "confirmed")}</div>
-      ${Array.isArray(b.participants) ? `<div>Participants: ${b.participants.length}</div>` : ""}
+      <div>Participants: ${count}${Number.isFinite(cap) ? ` / ${cap}` : ""}</div>
       ${b.notes ? `<div>Notes: ${escapeHtml(b.notes)}</div>` : ""}
       <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-        ${joined
-          ? `<button type="button" data-act="leave">Leave</button>`
-          : `<button type="button" data-act="join">Join</button>`}
+        ${actionBtn}
+        <button type="button" data-act="copy-id">Copy ID</button>
       </div>
     </div>
   `;
 
   const wrap = elSearchRes.querySelector(".slot-item");
+  const id = wrap?.dataset.id;
+
+  // Owner delete
+  wrap?.querySelector('button[data-act="cancel"]')?.addEventListener("click", async () => {
+    if (!id) return;
+    if (!confirm("Delete this booking? (Owner only)")) return;
+    try {
+      await apiFetch(`/api/bookings/${encodeURIComponent(id)}`, "DELETE");
+      await searchById();
+      await loadMyBookings();
+    } catch (err) {
+      alert("Delete failed: " + err.message);
+    }
+  });
+
+  // Join (only allowed on search view)
   wrap?.querySelector('button[data-act="join"]')?.addEventListener("click", async () => {
-    const id = wrap.dataset.id;
+    if (!id) return;
     try {
       await apiFetch(`/api/bookings/${encodeURIComponent(id)}/join`, "POST");
       await searchById();
@@ -141,8 +254,9 @@ function renderSearchedBooking(b) {
     }
   });
 
+  // Leave
   wrap?.querySelector('button[data-act="leave"]')?.addEventListener("click", async () => {
-    const id = wrap.dataset.id;
+    if (!id) return;
     try {
       await apiFetch(`/api/bookings/${encodeURIComponent(id)}/leave`, "POST");
       await searchById();
@@ -151,17 +265,31 @@ function renderSearchedBooking(b) {
       alert("Leave failed: " + e.message);
     }
   });
+
+  // Copy ID
+  wrap?.querySelector('button[data-act="copy-id"]')?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(String(id || "")); alert("Copied: " + id); }
+    catch { alert("Copy failed"); }
+  });
 }
 
-// API calls
+/* ===== API calls ===== */
 async function loadMe() {
   try {
     const me = await apiFetch("/api/auth/me");
     const name = me?.username || me?.name || "User";
-    localStorage.setItem("uid", me?.uid || "");
+    const uid = pickUidLike(me) || pickUidLike(me?.user) || tryExtractUidFromToken();
+    if (uid) localStorage.setItem("uid", uid);
     elUserName.textContent = name;
   } catch (err) {
-    elUserName.textContent = "Unknown";
+    // 后端没有 /auth/me 也能依赖 token 解析出来的 uid
+    const uid = tryExtractUidFromToken();
+    if (uid) {
+      localStorage.setItem("uid", uid);
+      elUserName.textContent = "User";
+    } else {
+      elUserName.textContent = "Unknown";
+    }
   }
 }
 async function loadRooms() {
@@ -196,7 +324,7 @@ async function searchById() {
   }
 }
 
-/* ---------- Form / Events ---------- */
+/* ===== Form / Events ===== */
 function bindForm() {
   elForm.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -212,7 +340,6 @@ function bindForm() {
         end: elEnd.value,
         notes: elNotes.value.trim() || undefined,
       };
-      console.log("[Create] payload:", payload);
       if (!payload.roomId) throw new Error("Please select a room.");
       if (payload.end <= payload.start) throw new Error("End time must be later than start time.");
       await apiFetch("/api/bookings", "POST", payload);
@@ -247,7 +374,7 @@ function setDefaultDateTime() {
   elEnd.value = `${pad2(endH)}:${m2}`;
 }
 
-// Boot: verify first, then load 
+/* ===== Boot ===== */
 window.addEventListener("DOMContentLoaded", async () => {
   // elements
   elUserName  = document.getElementById("user-name");
@@ -275,6 +402,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   if (!localStorage.getItem("token")) return location.replace("./index.html");
 
-  await loadMe(); // verify token first
+  await loadMe(); // verify token and cache uid (string)
   await Promise.allSettled([loadRooms(), loadMyBookings()]);
 });

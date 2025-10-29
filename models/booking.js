@@ -1,96 +1,86 @@
 // models/Booking.js
 const mongoose = require("mongoose");
+const { Schema, model, Types } = mongoose;
 
-// Keep in sync with frontend list of rooms
-const roomIds = ["r1", "r2", "r3"];
+const BookingSchema = new Schema({
+  creator: { type: Types.ObjectId, ref: "User", required: true },
+  booker:  { type: Types.ObjectId, ref: "User" }, // legacy single-booker (kept for backward compatibility)
+  participants: [{ type: Types.ObjectId, ref: "User" }], // NEW: multi-participants
+  roomId:   { type: String, required: true },
+  location: { type: String },
+  startTime:{ type: Date, required: true },
+  endTime:  { type: Date, required: true },
+  status:   { type: String, enum: ["available","booked","cancelled"], default: "booked" },
+  notes:    { type: String, default: "" },
+}, { timestamps: true });
 
-const bookingSchema = new mongoose.Schema(
-  {
-    // owner/provider of the time slot
-    creator: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
-
-    // consumer who reserves the slot (nullable when available)
-    booker: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, index: true },
-
-    startTime: { type: Date, required: true, index: true },
-    endTime:   { type: Date, required: true },
-
-    status: {
-      type: String,
-      enum: ["available", "booked", "cancelled"],
-      default: "available",
-      index: true,
-    },
-
-    location: { type: String, trim: true, maxlength: 120 }, // optional
-    notes: { type: String, maxlength: 500 },
-
-    // IMPORTANT: persist the room id; otherwise Mongoose strict mode drops it
-    roomId: { type: String, enum: roomIds, required: true },
-    // deletedAt: { type: Date, default: null }, // optional soft-delete flag
-  },
-  { timestamps: true }
-);
-
-// Basic validation: endTime > startTime
-bookingSchema.path("endTime").validate(function (v) {
-  return v > this.startTime;
-}, "endTime must be greater than startTime");
-
-// Optional: enforce a max duration (e.g., 4 hours)
-bookingSchema.pre("validate", function (next) {
-  const maxMs = 4 * 60 * 60 * 1000;
-  if (this.endTime && this.startTime && (this.endTime - this.startTime) > maxMs) {
-    return next(new Error("Slot duration exceeds 4 hours"));
+// Normalize before save: ensure participants unique, and keep legacy field in sync (optional)
+BookingSchema.pre("save", function(next) {
+  if (Array.isArray(this.participants)) {
+    const uniq = [...new Set(this.participants.map(id => String(id)))].map(id => new Types.ObjectId(id));
+    this.participants = uniq;
+    // keep legacy 'booker' as the first participant if present
+    if (!this.booker && this.participants.length > 0) {
+      this.booker = this.participants[0];
+    }
   }
   next();
 });
 
-// Useful indexes
-bookingSchema.index({ creator: 1, startTime: 1 });
-bookingSchema.index({ booker: 1, startTime: 1 });
-
-// Overlap check for a creator's calendar
-bookingSchema.statics.hasConflict = async function (creatorId, startTime, endTime, excludeId = null) {
-  const filter = {
-    creator: creatorId,
-    status: { $in: ["available", "booked"] },
+// Conflict check (unchanged signature): overlap for this user
+BookingSchema.statics.hasConflict = async function(userId, startTime, endTime) {
+  return await this.exists({
     $and: [
-      { startTime: { $lt: endTime } },  // existing.start < new.end
-      { endTime:   { $gt: startTime } } // existing.end   > new.start
-    ],
-  };
-  if (excludeId) filter._id = { $ne: excludeId };
-  return !!(await this.exists(filter));
+      { $or: [
+          { creator: userId },
+          { booker: userId },
+          { participants: { $in: [userId] } }, // NEW: consider participants
+        ]
+      },
+      { startTime: { $lt: endTime } },
+      { endTime:   { $gt: startTime } }
+    ]
+  });
 };
 
-// Create an available slot with conflict guard
-bookingSchema.statics.createSlot = async function ({ creator, startTime, endTime, location, notes }) {
-  const conflict = await this.hasConflict(creator, startTime, endTime);
-  if (conflict) {
-    const err = new Error("Time slot conflicts with existing one");
-    err.code = "TIME_CONFLICT";
-    throw err;
+// Reserve (join) by adding to participants if capacity not exceeded
+BookingSchema.statics.reserve = async function({ slotId, bookerId, capacity = 9999 }) {
+  const doc = await this.findById(slotId);
+  if (!doc) return null;
+
+  // If legacy-only doc, seed participants with existing booker/creator once.
+  if (!Array.isArray(doc.participants) || doc.participants.length === 0) {
+    const seed = [];
+    if (doc.booker)  seed.push(doc.booker);
+    else             seed.push(doc.creator);
+    doc.participants = seed;
   }
-  return this.create({ creator, startTime, endTime, location, notes, status: "available" });
+
+  const alreadyIn = doc.participants.some(id => String(id) === String(bookerId));
+  if (alreadyIn) return doc; // idempotent join
+
+  if (doc.participants.length >= capacity) return null; // full
+
+  doc.participants.push(bookerId);
+  doc.status = "booked";
+  await doc.save();
+  return doc;
 };
 
-// Reserve only if still available (prevents double booking)
-bookingSchema.statics.reserve = function ({ slotId, bookerId }) {
-  return this.findOneAndUpdate(
-    { _id: slotId, status: "available", booker: null },
-    { $set: { status: "booked", booker: bookerId } },
-    { new: true }
-  );
+// Cancel (leave): remove from participants; if empty, keep status booked or set available as you prefer
+BookingSchema.statics.cancel = async function({ slotId, bookerId }) {
+  const doc = await this.findById(slotId);
+  if (!doc) return null;
+
+  if (bookerId) {
+    doc.participants = (doc.participants || []).filter(id => String(id) !== String(bookerId));
+  } else {
+    // fallback: clear all (delete scenario handled elsewhere)
+    doc.participants = [];
+  }
+
+  await doc.save();
+  return doc;
 };
 
-// Cancel only if you are the booker or creator (check in controller)
-bookingSchema.statics.cancel = function ({ slotId }) {
-  return this.findOneAndUpdate(
-    { _id: slotId, status: { $in: ["available", "booked"] } },
-    { $set: { status: "cancelled", booker: null } },
-    { new: true }
-  );
-};
-
-module.exports = mongoose.model("Booking", bookingSchema);
+module.exports = model("Booking", BookingSchema);
