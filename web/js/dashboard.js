@@ -51,34 +51,48 @@ function toStrArr(arr) {
   return Array.isArray(arr) ? arr.map(x => String(x)) : [];
 }
 
-/* ======== minimal additions for MyBookings buttons ======== */
-function normId(x) {
-  return x == null ? "" : String(x);
-}
+// stable string id
+function normId(x) { return x == null ? "" : String(x); }
+
+// pick an owner-like field name from various backends
 function pickUidLike(obj) {
-  // 兼容多种 owner/uid 字段命名
   return normId(
-    (obj && (obj.uid ?? obj.id ?? obj._id ?? obj.userId ?? obj.ownerId ?? obj.createdBy)) ?? ""
+    (obj && (obj.uid ?? obj.userId ?? obj.ownerId ?? obj.createdBy ?? obj.id ?? obj._id)) ?? ""
   );
 }
+
 function tryExtractUidFromToken() {
   const t = localStorage.getItem("token");
   if (!t || t.split(".").length !== 3) return "";
   try {
     const payload = JSON.parse(atob(t.split(".")[1]));
-    // token 里也做同样字段挑选
     return pickUidLike(payload);
   } catch {
     return "";
   }
 }
-/* ======== end minimal additions ======== */
+
+/* === unified join/owner/count helpers (fixes double-counting) === */
+// count = | {owner} ∪ participants | (deduped)
+function countWithOwner(b) {
+  const owner = pickUidLike(b);
+  const parts = toStrArr(b.participants).map(normId);
+  return new Set([normId(owner), ...parts]).size;
+}
+
+// joined = I am owner OR I am in participants
+function amJoined(b, my) {
+  const owner = normId(pickUidLike(b));
+  const parts = toStrArr(b.participants).map(normId);
+  const me = normId(my);
+  return !!me && (me === owner || parts.includes(me));
+}
 
 /* ===== room map for capacity lookup ===== */
 let ROOMS_MAP = {};
 function getCapacity(roomId) {
   const r = ROOMS_MAP[roomId];
-  return r && typeof r.capacity === "number" ? r.capacity : 9999; // 保持你原来的默认值
+  return r && typeof r.capacity === "number" ? r.capacity : Number.POSITIVE_INFINITY;
 }
 
 /* ===== Renderers ===== */
@@ -98,6 +112,7 @@ function renderRooms(rooms = []) {
     elRoomSel.innerHTML = `<option value="" disabled selected>No rooms</option>`;
     return;
   }
+
   elRoomSel.innerHTML = rooms.map(r =>
     `<option value="${escapeAttr(r.id || r._id)}">${escapeHtml(r.name || "Room")}</option>`
   ).join("");
@@ -121,24 +136,24 @@ function renderBookings(list = []) {
 
   const my = normId(localStorage.getItem("uid") || "");
   elSlots.innerHTML = list.map(b => {
-    const parts = toStrArr(b.participants).map(normId);
-    const count = typeof b.participantCount === "number" ? b.participantCount : parts.length;
-    const joined = !!(my && parts.includes(my));
-    const isOwner = !!(my && pickUidLike(b) === my);
-    const cap = getCapacity(normId(b.roomId));
+    const isOwner = !!(my && normId(pickUidLike(b)) === my);
+    const joined  = amJoined(b, my); // owner is considered joined
+    const count   = Number.isFinite(b.participantCount) ? b.participantCount : countWithOwner(b);
+    const cap     = getCapacity(normId(b.roomId));
 
-    // My Bookings page: no Join
     let actionBtn = "";
     if (isOwner) {
       actionBtn = `<button type="button" data-act="cancel">Delete (owner)</button>`;
     } else if (joined) {
       actionBtn = `<button type="button" data-act="leave">Leave</button>`;
-    } // else: no button
+    }
+
+    const idStr = String(b.id || b._id || "");
 
     return `
-      <div class="slot-item" data-id="${escapeHtml(String(b.id || b._id || ""))}">
+      <div class="slot-item" data-id="${escapeHtml(idStr)}">
         <div><strong>${escapeHtml(b.roomName || "Room")}</strong></div>
-        <div>ID: <code>${escapeHtml(String(b.id || b._id || ""))}</code></div>
+        <div>ID: <code>${escapeHtml(idStr)}</code></div>
         <div>${escapeHtml(b.date)} · ${escapeHtml(b.start)} - ${escapeHtml(b.end)}</div>
         <div>Status: ${escapeHtml(b.status || "confirmed")}</div>
         <div>Participants: ${count}${Number.isFinite(cap) ? ` / ${cap}` : ""}</div>
@@ -197,13 +212,13 @@ function renderSearchedBooking(b) {
     elSearchRes.innerHTML = `<div class="muted">No result.</div>`;
     return;
   }
-  const my = String(localStorage.getItem("uid") || "");
-  const parts = toStrArr(b.participants);
-  const count = typeof b.participantCount === "number" ? b.participantCount : parts.length;
-  const joined = my && parts.includes(my);
-  const isOwner = my && String(b.uid || "") === my;
-  const cap = getCapacity(b.roomId);
-  const canJoin = !isOwner && !joined && count < cap;
+
+  const my      = normId(localStorage.getItem("uid") || "");
+  const isOwner = !!(my && normId(pickUidLike(b)) === my);
+  const joined  = amJoined(b, my);
+  const count   = Number.isFinite(b.participantCount) ? b.participantCount : countWithOwner(b);
+  const cap     = getCapacity(normId(b.roomId));
+  const canJoin = !isOwner && !joined && (!Number.isFinite(cap) || count < cap);
 
   const actionBtn = isOwner
     ? `<button type="button" data-act="cancel">Delete (owner)</button>`
@@ -211,10 +226,12 @@ function renderSearchedBooking(b) {
         ? `<button type="button" data-act="leave">Leave</button>`
         : `<button type="button" data-act="join" ${canJoin ? "" : "disabled"}>Join</button>`);
 
+  const idStr = String(b.id || b._id || "");
+
   elSearchRes.innerHTML = `
-    <div class="slot-item" data-id="${escapeHtml(String(b.id))}">
+    <div class="slot-item" data-id="${escapeHtml(idStr)}">
       <div><strong>${escapeHtml(b.roomName || "Room")}</strong></div>
-      <div>ID: <code>${escapeHtml(String(b.id))}</code></div>
+      <div>ID: <code>${escapeHtml(idStr)}</code></div>
       <div>${escapeHtml(b.date)} · ${escapeHtml(b.start)} - ${escapeHtml(b.end)}</div>
       <div>Status: ${escapeHtml(b.status || "confirmed")}</div>
       <div>Participants: ${count}${Number.isFinite(cap) ? ` / ${cap}` : ""}</div>
@@ -282,7 +299,6 @@ async function loadMe() {
     if (uid) localStorage.setItem("uid", uid);
     elUserName.textContent = name;
   } catch (err) {
-    // 后端没有 /auth/me 也能依赖 token 解析出来的 uid
     const uid = tryExtractUidFromToken();
     if (uid) {
       localStorage.setItem("uid", uid);
